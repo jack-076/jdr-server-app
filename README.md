@@ -47,16 +47,27 @@ Le serveur écoute sur `http://127.0.0.1:3000`, uniquement sur la machine locale
 | GET | `/api/session` | Consulter l'état et l'identifiant de la partie |
 | POST | `/api/session/start` | Démarrer une partie avec un nouvel UUID |
 | POST | `/api/session/stop` | Arrêter la partie et remettre son identifiant à `null` |
+| GET | `/api/session/invitation` | Récupérer le secret d'invitation de la partie active (meneur uniquement) |
 
 Un démarrage ou un arrêt redondant renvoie `409`. Une route inconnue renvoie `404`.
 L'état reste en mémoire et revient à `stopped` au redémarrage du serveur.
 
-Ce prototype n'a pas encore d'authentification ni d'invitations. Son UUID identifie
-la partie et ne constitue pas une autorisation d'accès. Ne pas l'exposer sur Internet.
+Le démarrage, l'arrêt et la récupération de l'invitation exigent l'en-tête
+`Authorization: Bearer <clé du meneur>`. Une clé aléatoire est affichée dans le
+terminal du serveur à chaque lancement ; elle doit rester privée et change au
+redémarrage. Un accès sans clé valide renvoie `401`.
+
+Chaque partie reçoit un secret d'invitation distinct, effacé à l'arrêt et exclu
+des réponses publiques. La route d'invitation renvoie `409` sans partie active
+et `Cache-Control: no-store` lors d'une récupération réussie. Rejoindre une partie
+avec cette invitation n'est pas encore implémenté.
+
+L'UUID identifie la partie et ne constitue pas une autorisation d'accès.
+Ce prototype local n'est pas prêt pour une exposition sur Internet.
 
 ## Prochaines étapes
 
-- Authentification du meneur, invitations joueurs et révocation des accès.
+- Connexion des joueurs par invitation et révocation des accès.
 - Interface de bureau Windows et Linux avec Electron ; accès joueurs par navigateur.
 - Import de cartes, tokens et illustrations dans une bibliothèque de médias.
 - Plateau partagé, sauvegarde des campagnes et configuration de l'accès distant.
