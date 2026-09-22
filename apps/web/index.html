@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="fr">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>JDR — Gestion de partie</title>
+        <script src="/app.js" defer></script>
+    </head>
+    <body>
+        <main>
+            <h1>Gestion de partie</h1>
+            <section aria-labelledby="session-title">
+                <h2 id="session-title">Partie actuelle</h2>
+                <p id="session-status">État non chargé</p>
+                <button id="refresh-session" type="button">
+                    Actualiser l'état
+                </button>
+                <a href="/api/session">Consulter les données de la partie</a>
+            </section>
+            <section aria-labelledby="host-title">
+                <h2 id="host-title">Commandes du meneur</h2>
+                <label for="host-key">Clé du meneur</label>
+                <input
+                id="host-key"
+                type="password"
+                autocomplete="off"
+                spellcheck="false"
+                maxlength="64"
+                >
+                <button id="start-session" type="button">Démarrer</button>
+                <button id="stop-session" type="button">Arrêter</button>
+                <button id="get-invitation" type="button">
+                    Générer une invitation unique
+                </button>
+                <label for="invitation-token">Invitation à partager à un joueur</label>
+                <input
+                id="invitation-token"
+                type="text"
+                readonly
+                autocomplete="off"
+                spellcheck="false"
+                >
+                <p id="host-message" role="status"></p>
+            </section>
+            <section aria-labelledby="player-title">
+                <h2 id="player-title">Rejoindre comme joueur</h2>
+                <form id="join-form">
+                    <label for="join-token">Invitation reçue</label>
+                    <input
+                    id="join-token"
+                    type="password"
+                    autocomplete="off"
+                    spellcheck="false"
+                    maxlength="64"
+                    required
+                    >
+                    <button id="join-session" type="submit">Rejoindre</button>
+                </form>
+                <button id="check-access" type="button" disabled>
+                    Vérifier mon accès
+                </button>
+                <p id="player-message" role="status"></p>
+            </section>
+        </main>
+    </body>
+</html>
