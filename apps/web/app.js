@@ -13,16 +13,71 @@ const playerMessage = document.getElementById("player-message");
 const checkAccessButton = document.getElementById("check-access");
 
 let playerToken = null;
+let sessionRevision = 0;
+let accessCheckPending = false;
+let accessCheckRunning = false;
+
+function revokePlayerAccess() {
+    savePlayerToken(null);
+    joinInput.value = "";
+    joinInput.disabled = false;
+    joinButton.disabled = false;
+    checkAccessButton.disabled = true;
+    playerMessage.textContent = "Accès expiré ou révoqué. Demande une nouvelle invitation.";
+}
+
+function savePlayerToken(token) {
+    playerToken = token;
+
+    try {
+        if (token === null) {
+            sessionStorage.removeItem("jdr.playerToken");
+        } else {
+            sessionStorage.setItem("jdr.playerToken", token);
+        }
+    } catch {
+        console.warn("Le stockage de l'accès joueur es indisponible.");
+    }
+}
+
+function restorePlayerToken() {
+    let savedToken;
+
+    try {
+        savedToken = sessionStorage.getItem("jdr.playerToken");
+    } catch {
+        return;
+    }
+
+    if (
+        typeof savedToken !== "string" || !/^[a-f0-9]{64}$/.test(savedToken)
+    ) {
+        return;
+    }
+
+    playerToken = savedToken;
+    joinInput.value = "";
+    joinInput.disabled = true;
+    joinButton.disabled = true;
+    checkAccessButton.disabled = false;
+
+    playerMessage.textContent = "Vérification de l'accès enregistré ...";
+}
 
 refreshButton.addEventListener("click", refreshSession);
 
 async function refreshSession() {
+    if (refreshButton.disabled) {
+        return;
+    }
     refreshButton.disabled = true;
+    const revision = sessionRevision;
     statusElement.textContent = "Chargement…";
 
     try {
         const response = await fetch("/api/session", {
             cache: "no-store",
+            signal: AbortSignal.timeout(5000),
         });
 
         if  (!response.ok) {
@@ -31,12 +86,18 @@ async function refreshSession() {
 
         const session= await response.json();
 
+        if (revision !== sessionRevision) {
+            return;
+        }
+
         statusElement.textContent =
             session.status === "running"
             ? "Partie en cours"
             : "Partie arrêtée";
     } catch (error) {
-        statusElement.textContent = "Impossible de contacter le serveur.";
+        if (revision === sessionRevision) {
+            statusElement.textContent = "Impossible de contacter le serveur.";
+        }
         console.error(error);
     } finally {
         refreshButton.disabled = false;
@@ -64,6 +125,7 @@ async function changeSession(action) {
                 Authorization: `Bearer ${key}`,
             },
             cache: "no-store",
+            signal: AbortSignal.timeout(5000),
         });
         const result = await response.json();
 
@@ -109,6 +171,7 @@ async function getInvitation() {
                 Authorization: `Bearer ${key}`,
             },
             cache: "no-store",
+            signal: AbortSignal.timeout(5000),
         });
 
         const result = await response.json();
@@ -118,7 +181,10 @@ async function getInvitation() {
             return;
         }
 
-        invitationInput.value = result.invitationToken;
+        const invitationUrl = new URL("/", window.location.origin);
+        invitationUrl.hash = `invitation=${result.invitationToken}`;
+
+        invitationInput.value = invitationUrl.href;
         hostMessage.textContent = "Invitation prête à partager à un joueur.";
     }   catch (error) {
         hostMessage.textContent = "Impossible de générer l’invitation.";
@@ -154,6 +220,7 @@ async function joinSession(event) {
                 Authorization: `Bearer ${invitation}`,
             },
             cache: "no-store",
+            signal: AbortSignal.timeout(5000),
         });
 
         const result = await response.json();
@@ -163,7 +230,7 @@ async function joinSession(event) {
             return;
         }
 
-        playerToken = result.playerToken;
+        savePlayerToken(result.playerToken);
         joinInput.value = "";
         joinInput.disabled = true;
         checkAccessButton.disabled = false;
@@ -179,31 +246,43 @@ async function joinSession(event) {
         }
 }
 
-async function checkPlayerAccess() {
-    if (playerToken === null || checkAccessButton.disabled) {
+async function checkPlayerAccess({ silent = false} = {}) {
+    if (playerToken === null) {
+        return;
+    }
+    if (accessCheckRunning) {
+        accessCheckPending = true;
         return;
     }
 
+    const checkedToken = playerToken;
+    const revision = sessionRevision;
+    const isCurrent = () => checkedToken === playerToken && revision === sessionRevision;
+    accessCheckRunning = true;
     checkAccessButton.disabled = true;
-    playerMessage.textContent = "Vérification de l’accès…";
+    if (!silent) {
+        playerMessage.textContent = "Vérification de l’accès…";
+    }
 
     try {
         const response = await fetch("/api/session/me", {
             headers: {
-                Authorization: `Bearer ${playerToken}`,
+                Authorization: `Bearer ${checkedToken}`,
             },
             cache: "no-store",
+            signal: AbortSignal.timeout(5000),
         });
 
+        if (!isCurrent()) {
+            return;
+        }
+
         if (response.status === 401) {
-            playerToken = null;
-            joinInput.value = "";
-            joinInput.disabled = false;
-            joinButton.disabled = false;
+            revokePlayerAccess();
 
-            playerMessage.textContent = "Accès expiré ou révoqué. Demande une nouvelle invitation.";
-
-            await refreshSession();
+            if (!silent) {
+                await refreshSession();
+            }
             return;
         }
 
@@ -213,15 +292,62 @@ async function checkPlayerAccess() {
 
         const result = await response.json();
 
-        playerMessage.textContent = `Accès valide. Joueur : ${result.playerId}`;
+        if (!isCurrent()) {
+            return;
+        }
 
-        await refreshSession();
+        const message = `Accès valide. Joueur : ${result.playerId}`;
+
+        if (playerMessage.textContent !== message) {
+            playerMessage.textContent = message;
+        }
+
+        if (!silent) {
+            await refreshSession();
+        }
+
     }   catch (error) {
-        playerMessage.textContent = "Vérification impossible. Réessaie lorsque le serveur est accessible.";
+        if (isCurrent()) {
+            playerMessage.textContent = "Vérification impossible. Réessaie lorsque le serveur est accessible.";
+        }
         console.error(error);
     }   finally {
+        accessCheckRunning = false;
         checkAccessButton.disabled = playerToken === null;
+        if (accessCheckPending) {
+            accessCheckPending = false;
+            await checkPlayerAccess({ silent: true });
+        }
     }
+}
+
+function loadInvitationFromUrl() {
+    const parameters = new URLSearchParams(
+        window.location.hash.slice(1)
+    );
+
+    const invitation = parameters.get("invitation");
+
+    if (invitation === null) {
+        return;
+    }
+
+    window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search
+    );
+
+    if (!/^[a-f0-9]{64}$/.test(invitation)) {
+        playerMessage.textContent = "lien d'invitation mal formé.";
+        return;
+    }
+
+    joinInput.value = invitation;
+    playerMessage.textContent =
+    "Invitattion chargée. Clique sur Rejoindre pour entrer dans la pratie.";
+
+    joinButton.focus();
 }
 
 startButton.addEventListener("click", () => changeSession("start"));
@@ -230,4 +356,47 @@ invitationButton.addEventListener("click", getInvitation);
 checkAccessButton.addEventListener("click", checkPlayerAccess);
 joinForm.addEventListener("submit", joinSession);
 
-refreshSession();
+function connectSessionEvents() {
+  const events = new EventSource("/api/events");
+
+  events.addEventListener("session", (event) => {
+    const session = JSON.parse(event.data);
+    sessionRevision += 1;
+
+    const message =
+      session.status === "running"
+        ? "Partie en cours"
+        : "Partie arrêtée";
+
+    if (statusElement.textContent !== message) {
+      statusElement.textContent = message;
+    }
+
+    if (session.status === "stopped" && playerToken !== null) {
+      revokePlayerAccess();
+    } else if (playerToken !== null) {
+      checkPlayerAccess({ silent: true });
+    }
+  });
+
+  events.addEventListener("error", () => {
+    sessionRevision += 1;
+    statusElement.textContent =
+      "Connexion interrompue. Reconnexion en cours…";
+  });
+}
+
+async function maintainPlayerPresence() {
+  try {
+    if (playerToken !== null) {
+      await checkPlayerAccess({ silent: true });
+    }
+  } finally {
+    setTimeout(maintainPlayerPresence, 60000);
+  }
+}
+
+loadInvitationFromUrl();
+restorePlayerToken();
+connectSessionEvents();
+maintainPlayerPresence();

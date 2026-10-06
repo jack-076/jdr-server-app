@@ -2,6 +2,7 @@ const http = require("node:http");
 const { randomUUID, randomBytes, timingSafeEqual } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const path = require("node:path");
+const { getProfiles, createProfile } = require("./profiles");
 const homePage = readFileSync(path.join(__dirname, "../web/index.html"));
 const browserScript = readFileSync(path.join(__dirname, "../web/app.js"));
 const hostKey = randomBytes(32).toString("hex");
@@ -13,12 +14,38 @@ const session = {
 };
 
 const players = new Map();
+const PLAYER_TIMEOUT_MS = 30 * 60 * 1000;
+const sessionStreams = new Set();
+
+function removeExpiredPlayers() {
+  const now = Date.now();
+
+  for (const [token, player] of players) {
+    if (now - player.lastSeenAt >= PLAYER_TIMEOUT_MS) {
+      players.delete(token);
+    }
+  }
+}
 
 function getPublicSession() {
   return {
     id: session.id,
     status: session.status,
   };
+}
+
+function sendSessionEvent(response) {
+  const data = JSON.stringify(getPublicSession());
+
+  if (!response.write(`event: session\ndata: ${data}\n\n`)) {
+    response.destroy();
+  }
+}
+
+function broadcastSession() {
+  for (const response of sessionStreams) {
+    sendSessionEvent(response);
+  }
 }
 
 function hasBearerToken(request, token) {
@@ -47,8 +74,11 @@ function getPlayer(request) {
     return null;
   }
 
+  removeExpiredPlayers();
+
   for (const [token, player] of players) {
     if (hasBearerToken(request, token) && player.sessionId === session.id) {
+      player.lastSeenAt = Date.now();
       return player;
     }
   }
@@ -76,10 +106,60 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/events") {
+    if (sessionStreams.size >= 64) {
+      response.writeHead(503, {
+        "Content-Type": "text/plain; charset=utf-8",
+      });
+      response.end("Trop de connexions ouvertes.");
+      return;
+    }
+
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    sessionStreams.add(response);
+
+    const heartbeat = setInterval(() => {
+      if (!response.write(": ping\n\n")) {
+        response.destroy();
+      }
+    }, 25000);
+
+    response.on("close", () => {
+      clearInterval(heartbeat);
+      sessionStreams.delete(response);
+    });
+
+    sendSessionEvent(response);
+    return;
+  }
+
   response.setHeader(
     "Content-Type",
     "application/json; charset=utf-8"
   );
+
+  if (request.method === "GET" && url.pathname === "/api/profiles") {
+    if (!isHost(request)) {
+      response.writeHead(401);
+      response.end(JSON.stringify({
+        error: "Authentification du meneur requise",
+      }));
+      return;
+    }
+
+    response.setHeader("Cache-Control", "no-store");
+    response.writeHead(200);
+    response.end(JSON.stringify({
+      profiles: getProfiles(),
+    }));
+    return;
+  }
 
   if (request.method === "GET" && url.pathname === "/api/session") {
     response.writeHead(200);
@@ -107,6 +187,7 @@ const server = http.createServer((request, response) => {
     session.id = randomUUID();
     session.invitationToken = null;
     session.status = "running";
+    broadcastSession();
 
     response.writeHead(200);
     response.end(JSON.stringify(getPublicSession()));
@@ -134,6 +215,7 @@ const server = http.createServer((request, response) => {
     session.invitationToken = null;
     players.clear();
     session.status = "stopped";
+    broadcastSession();
 
     response.writeHead(200);
     response.end(JSON.stringify(getPublicSession()));
@@ -178,6 +260,8 @@ const server = http.createServer((request, response) => {
       return;
     }
 
+    removeExpiredPlayers();
+
     if (players.size >= 20) {
       response.writeHead(409);
       response.end(JSON.stringify({
@@ -192,6 +276,7 @@ const server = http.createServer((request, response) => {
     players.set(playerToken, {
       id: playerId,
       sessionId: session.id,
+      lastSeenAt: Date.now(),
     });
 
     session.invitationToken = null;
@@ -232,6 +317,8 @@ const server = http.createServer((request, response) => {
     error: "Route introuvable",
   }));
 });
+
+setInterval(removeExpiredPlayers, 60 * 1000).unref();
 
 server.listen(3000, "127.0.0.1", () => {
     console.log("Serveur accessible sur http://127.0.0.1:3000");

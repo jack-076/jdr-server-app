@@ -45,8 +45,10 @@ Le serveur écoute sur `http://127.0.0.1:3000`, uniquement sur la machine locale
 
 Ouvrir cette adresse dans le navigateur. Le meneur saisit la clé affichée dans
 le terminal, démarre la partie puis génère une invitation à partager à un joueur.
-Dans un autre onglet, le joueur saisit cette invitation pour rejoindre et peut
-vérifier son accès avec le bouton dédié. L'actualisation est pour l'instant manuelle.
+Le joueur ouvre le lien dans un autre onglet, puis confirme son entrée. Le secret
+du lien est lu depuis le fragment de l'URL, puis retiré de la barre d'adresse.
+Les changements d'état arrivent par événements SSE, sans actualisation périodique
+visible. Les liens utilisant `127.0.0.1` fonctionnent uniquement sur la même machine.
 
 Les fichiers web sont lus au lancement : redémarrer le serveur et recharger les
 pages après une modification HTML ou JavaScript côté navigateur.
@@ -59,6 +61,8 @@ pages après une modification HTML ou JavaScript côté navigateur.
 | POST | `/api/session/invitation` | Générer une invitation à usage unique (meneur uniquement) |
 | POST | `/api/session/join` | Échanger une invitation contre un accès joueur (`201`) |
 | GET | `/api/session/me` | Vérifier une clé joueur et retrouver son identité |
+| GET | `/api/events` | Recevoir l'état public de la partie en continu (SSE) |
+| GET | `/api/profiles` | Consulter les profils sauvegardés (meneur uniquement) |
 
 Un démarrage ou un arrêt redondant renvoie `409`. Une route inconnue renvoie `404`.
 L'état reste en mémoire et revient à `stopped` au redémarrage du serveur.
@@ -79,17 +83,49 @@ révoque pas les joueurs déjà entrés. Une partie accepte au maximum 20 accès
 le suivant est refusé avec `409`. Arrêter la partie supprime tous ces accès et
 l'invitation en attente.
 
-La clé joueur reste uniquement en mémoire dans la page : recharger celle-ci fait
-perdre la clé, mais ne supprime pas l'accès côté serveur. Rejoindre à nouveau
-nécessite une nouvelle invitation et occupe une place supplémentaire. La reconnexion
-et la suppression individuelle des accès ne sont pas encore implémentées.
+La clé joueur est conservée dans `sessionStorage` pour retrouver son accès après
+un rechargement du même onglet. Le serveur vérifie toujours sa validité. Une
+vérification silencieuse chaque minute renouvelle la présence ; après 30 minutes
+sans présence, l'accès expire. Un nettoyage chaque minute libère les places
+expirées, également supprimées avant une vérification ou une admission.
+
+Un redémarrage du serveur invalide tous les accès. La reprise depuis un nouvel
+onglet après fermeture n'est pas garantie par `sessionStorage`. Les requêtes de
+l'interface ont un délai maximal de cinq secondes ; une réponse perdue ne signifie
+pas que l'action n'a pas été effectuée côté serveur.
+
+## Profils en cours de développement
+
+Le module `apps/server/profiles.js` permet de créer et charger des profils
+contenant un identifiant et un pseudo, sauvegardés dans `data/profiles.json`.
+Ce dossier est exclu de Git. La route de consultation réservée au meneur est
+disponible ; la création via HTTP et son formulaire restent à implémenter.
+
+Les profils seront créés par le meneur et resteront indépendants des invitations.
+Après connexion, un joueur sélectionnera un profil libre, réservé à un seul accès.
+Le changement de profil devra réserver le nouveau et libérer l'ancien en une seule
+opération. Les fiches liées aux profils et leur sélection ne sont pas encore disponibles.
+
+## Vérifications
+
+```sh
+node --check apps/server/index.js
+node --check apps/server/profiles.js
+node --check apps/web/app.js
+node tests/web-state.test.cjs
+```
+
+Les tests simulent le navigateur et le réseau : ils couvrent les réponses retardées,
+la révocation, les erreurs réseau et les délais des actions. Ils ne remplacent pas
+une vérification dans un navigateur réel.
 
 L'UUID identifie la partie et ne constitue pas une autorisation d'accès.
 Ce prototype local n'est pas prêt pour une exposition sur Internet.
 
 ## Prochaines étapes
 
-- Actualisation automatique, liens d'invitation et gestion des reconnexions.
+- Création des profils par le meneur, sélection exclusive et changement de profil.
+- Accueil joueur dédié après invitation, puis table de jeu après sélection du profil.
 - Interface de bureau Windows et Linux avec Electron ; accès joueurs par navigateur.
 - Import de cartes, tokens et illustrations dans une bibliothèque de médias.
 - Plateau partagé, sauvegarde des campagnes et configuration de l'accès distant.
