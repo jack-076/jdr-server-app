@@ -3,6 +3,7 @@ const { randomUUID, randomBytes, timingSafeEqual } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const path = require("node:path");
 const { getProfiles, createProfile } = require("./profiles");
+const { readJson } = require("./read-json");
 const homePage = readFileSync(path.join(__dirname, "../web/index.html"));
 const browserScript = readFileSync(path.join(__dirname, "../web/app.js"));
 const hostKey = randomBytes(32).toString("hex");
@@ -85,7 +86,7 @@ function getPlayer(request) {
   return null;
 }
 
-const server = http.createServer((request, response) => {
+const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, "http://127.0.0.1:3000");
 
   if (request.method === "GET" && url.pathname === "/") {
@@ -158,6 +159,70 @@ const server = http.createServer((request, response) => {
     response.end(JSON.stringify({
       profiles: getProfiles(),
     }));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/profiles") {
+    response.setHeader("Cache-control", "no-store");
+
+    if (!isHost(request)) {
+      response.writeHead(401, { Connection: "close" });
+      response.end(JSON.stringify({
+        error: "Authentification du meneur requise",
+      }));
+      return;
+    }
+
+    const contentType = request.headers["content-type"]
+      ?.split(";")[0].trim().toLowerCase();
+
+    if (contentType !== "application/json") {
+      response.writeHead(415, { Connection: "close"});
+      response.end(JSON.stringify({
+        error: "Le contenu doit être envoyé en JSON.",
+      }));
+      return;
+    }
+
+    try {
+      const body = await readJson(request);
+
+      if (
+        body === null ||
+        typeof body !== "object" ||
+        Array.isArray(body) ||
+        typeof body.name !== "string" ||
+        body.name.trim().length < 1 ||
+        body.name.trim().length > 40
+      ) {
+        response.writeHead(400);
+        response.end(JSON.stringify({
+          error: "Le pseudo doit contenir entre 1 et 40 caractères.",
+        }));
+        return;
+      }
+
+      const profile = createProfile(body.name);
+
+      response.writeHead(201);
+      response.end(JSON.stringify({ profile }));
+    } catch (error) {
+      if (response.destroyed){
+        return;
+      }
+
+      const statusCode = [400, 408, 413].includes(error.statusCode)
+        ? error.statusCode
+        : 500;
+
+      response.writeHead(statusCode, { connection: "close"});
+      response.end(JSON.stringify({
+        error: statusCode === 500
+          ? "Impossible de sauvegarder le profil."
+          : error.message,
+      }));
+    }
+
     return;
   }
 

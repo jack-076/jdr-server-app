@@ -63,6 +63,7 @@ pages après une modification HTML ou JavaScript côté navigateur.
 | GET | `/api/session/me` | Vérifier une clé joueur et retrouver son identité |
 | GET | `/api/events` | Recevoir l'état public de la partie en continu (SSE) |
 | GET | `/api/profiles` | Consulter les profils sauvegardés (meneur uniquement) |
+| POST | `/api/profiles` | Créer un profil avec un pseudo (meneur uniquement) |
 
 Un démarrage ou un arrêt redondant renvoie `409`. Une route inconnue renvoie `404`.
 L'état reste en mémoire et revient à `stopped` au redémarrage du serveur.
@@ -98,8 +99,11 @@ pas que l'action n'a pas été effectuée côté serveur.
 
 Le module `apps/server/profiles.js` permet de créer et charger des profils
 contenant un identifiant et un pseudo, sauvegardés dans `data/profiles.json`.
-Ce dossier est exclu de Git. La route de consultation réservée au meneur est
-disponible ; la création via HTTP et son formulaire restent à implémenter.
+Ce dossier est exclu de Git. Le meneur peut créer et lister les profils depuis
+la page, après avoir renseigné sa clé. La création attend un objet JSON
+`{"name":"Aldric"}` avec un pseudo de 1 à 40 caractères après suppression
+des espaces aux extrémités. Le serveur limite le corps à 4 Kio et sa lecture
+à cinq secondes. Le formulaire actualise la liste après une création confirmée.
 
 Les profils seront créés par le meneur et resteront indépendants des invitations.
 Après connexion, un joueur sélectionnera un profil libre, réservé à un seul accès.
@@ -111,20 +115,24 @@ opération. Les fiches liées aux profils et leur sélection ne sont pas encore 
 ```sh
 node --check apps/server/index.js
 node --check apps/server/profiles.js
+node --check apps/server/read-json.js
 node --check apps/web/app.js
 node tests/web-state.test.cjs
+node tests/profiles-api.test.cjs
 ```
 
 Les tests simulent le navigateur et le réseau : ils couvrent les réponses retardées,
-la révocation, les erreurs réseau et les délais des actions. Ils ne remplacent pas
-une vérification dans un navigateur réel.
+la révocation, les erreurs réseau, les délais des actions et la création des profils.
+Les tests de l'API utilisent des flux HTTP simulés et un dossier temporaire pour
+vérifier les autorisations, les entrées invalides et la persistance des profils.
+Ils ne remplacent pas une vérification dans un navigateur réel.
 
 L'UUID identifie la partie et ne constitue pas une autorisation d'accès.
 Ce prototype local n'est pas prêt pour une exposition sur Internet.
 
 ## Prochaines étapes
 
-- Création des profils par le meneur, sélection exclusive et changement de profil.
+- Sélection exclusive et changement de profil par les joueurs.
 - Accueil joueur dédié après invitation, puis table de jeu après sélection du profil.
 - Interface de bureau Windows et Linux avec Electron ; accès joueurs par navigateur.
 - Import de cartes, tokens et illustrations dans une bibliothèque de médias.

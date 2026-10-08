@@ -11,6 +11,13 @@ const joinInput = document.getElementById("join-token");
 const joinButton = document.getElementById("join-session");
 const playerMessage = document.getElementById("player-message");
 const checkAccessButton = document.getElementById("check-access");
+const loadProfilesButton = document.getElementById("load-profiles");
+const profilesMessage = document.getElementById("profiles-message");
+const profilesList = document.getElementById("profiles-list");
+const createProfileForm = document.getElementById("create-profile-form");
+const profileNameInput = document.getElementById("profile-name");
+const createProfileButton = document.getElementById("create-profile");
+const createProfileMessage = document.getElementById("create-profile-message");
 
 let playerToken = null;
 let sessionRevision = 0;
@@ -345,11 +352,130 @@ function loadInvitationFromUrl() {
 
     joinInput.value = invitation;
     playerMessage.textContent =
-    "Invitattion chargée. Clique sur Rejoindre pour entrer dans la pratie.";
+    "Invitation chargée. Clique sur Rejoindre pour entrer dans la partie.";
 
     joinButton.focus();
 }
 
+async function loadProfiles() {
+    if (loadProfilesButton.disabled) {
+        return;
+    }
+
+    profilesList.replaceChildren();
+
+    const key = hostKeyInput.value.trim();
+
+    if (!/^[a-f0-9]{64}$/.test(key)) {
+        profilesMessage.textContent = "Saisis la clé du meneur.";
+        return;
+    }
+
+    loadProfilesButton.disabled = true;
+    profilesMessage.textContent = "Chargement des profils…";
+
+    try {
+        const response = await fetch("/api/profiles", {
+            headers: {
+                Authorization: `Bearer ${key}`,
+            },
+            cache: "no-store",
+            signal: AbortSignal.timeout(5000),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            profilesMessage.textContent = result.error || "Accès refusé.";
+            return;
+        }
+
+        for (const profile of result.profiles) {
+            const item = document.createElement("li");
+            item.textContent = profile.name;
+            profilesList.append(item);
+        }
+
+        profilesMessage.textContent = result.profiles.length === 0
+            ? "Aucun profil créé."
+            : `${result.profiles.length} profil(s) enregistré(s).`;
+    } catch (error) {
+        profilesMessage.textContent = "Impossible de charger les profils.";
+        console.error(error);
+    } finally {
+        loadProfilesButton.disabled = false;
+    }
+}
+
+async function createPlayerProfile(event) {
+    event.preventDefault();
+
+    if (createProfileButton.disabled) {
+        return;
+    }
+
+    const key = hostKeyInput.value.trim();
+    const name = profileNameInput.value.trim();
+
+    if (!/^[a-f0-9]{64}$/.test(key)) {
+        createProfileMessage.textContent = "Saisis la clé du meneur.";
+        return;
+    }
+
+    if (name.length < 1 || name.length > 40) {
+        createProfileMessage.textContent =
+            "Le pseudo doit contenir entre 1 et 40 caractères.";
+        return;
+    }
+
+    if (loadProfilesButton.disabled) {
+        createProfileMessage.textContent = "Attends la fin du chargement des profils.";
+        return;
+    }
+
+    createProfileButton.disabled = true;
+    profileNameInput.disabled = true;
+    loadProfilesButton.disabled = true;
+    createProfileMessage.textContent = "Création du profil…";
+
+    try {
+        const response = await fetch("/api/profiles", {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${key}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ name }),
+            signal: AbortSignal.timeout(5000),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            createProfileMessage.textContent =
+                result.error || "Impossible de créer le profil.";
+            return;
+        }
+
+        profileNameInput.value = "";
+        createProfileMessage.textContent =
+            `Le profil « ${result.profile.name} » a été créé.`;
+
+        loadProfilesButton.disabled = false;
+        await loadProfiles();
+    } catch (error) {
+        createProfileMessage.textContent =
+            "Création non confirmée. Charge les profils avant de réessayer.";
+        console.error(error);
+    } finally {
+        createProfileButton.disabled = false;
+        profileNameInput.disabled = false;
+        loadProfilesButton.disabled = false;
+    }
+}
+
+createProfileForm.addEventListener("submit", createPlayerProfile);
+loadProfilesButton.addEventListener("click", loadProfiles);
 startButton.addEventListener("click", () => changeSession("start"));
 stopButton.addEventListener("click", () => changeSession("stop"));
 invitationButton.addEventListener("click", getInvitation);

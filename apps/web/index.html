@@ -41,6 +41,26 @@
                 spellcheck="false"
                 >
                 <p id="host-message" role="status"></p>
+                <h3>Profils joueurs</h3>
+                <form id="create-profile-form">
+                    <label for="profile-name">Pseudo du joueur</label>
+                    <input
+                        id="profile-name"
+                        type="text"
+                        maxlength="40"
+                        autocomplete="off"
+                        required
+                    >
+                    <button id="create-profile" type="submit">
+                        Créer le profil
+                    </button>
+                    <p id="create-profile-message" role="status"></p>
+                </form>
+                <button id="load-profiles" type="button">
+                    Charger les profils
+                </button>
+                <p id="profiles-message" role="status"></p>
+                <ul id="profiles-list"></ul>
             </section>
             <section aria-labelledby="player-title">
                 <h2 id="player-title">Rejoindre comme joueur</h2>

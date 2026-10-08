@@ -30,7 +30,9 @@ function page(fetchHandler) {
     const id = match[1];
     let text = "";
     return [id, {
-      value: "", disabled: id === "check-access", listeners: {},
+      value: "", disabled: id === "check-access", listeners: {}, children: [],
+      replaceChildren() { this.children = []; },
+      append(item) { this.children.push(item); },
       get textContent() { return text; },
       set textContent(value) { text = value; writes.push([id, value]); },
       focus() {},
@@ -43,7 +45,10 @@ function page(fetchHandler) {
   const deadlines = [];
   const timers = [];
   const context = vm.createContext({
-    document: { getElementById(id) { assert.ok(nodes[id], id); return nodes[id]; } },
+    document: {
+      getElementById(id) { assert.ok(nodes[id], id); return nodes[id]; },
+      createElement(tag) { return { tag, textContent: "" }; },
+    },
     window: {
       location: { origin: "http://localhost:3000", hash: "", pathname: "/", search: "" },
       history: { replaceState() {} },
@@ -189,3 +194,76 @@ for (const action of ["start", "stop", "invitation", "join"]) {
     assert.equal(p.run("playerToken"), null);
   });
 }
+
+test("créer un profil actualise la liste et bloque une double soumission", async () => {
+  const pending = deferred();
+  const name = '<img src=x onerror=alert(1)>';
+  const p = page((url, options) => {
+    assert.equal(url, '/api/profiles');
+    return options.method === 'POST'
+      ? pending.promise
+      : Promise.resolve(reply({ profiles: [{ id: 'one', name }] }));
+  });
+  p.nodes['host-key'].value = token;
+  p.nodes['profile-name'].value = `  ${name}  `;
+  let prevented = false;
+  const submit = () => p.nodes['create-profile-form'].listeners.submit({
+    preventDefault() { prevented = true; },
+  });
+  const operation = submit();
+  assert.equal(prevented, true);
+  await submit();
+  assert.equal(p.requests.length, 1);
+  assert.equal(p.nodes['load-profiles'].disabled, true);
+  assert.equal(p.requests[0].options.headers.Authorization, `Bearer ${token}`);
+  assert.equal(p.requests[0].options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(p.requests[0].options.body), { name });
+  pending.resolve(reply({ profile: { id: 'one', name } }, 201));
+  await operation;
+  assert.equal(p.requests.length, 2);
+  assert.equal(p.nodes['profiles-list'].children[0].textContent, name);
+  assert.equal(p.nodes['profile-name'].value, '');
+  assert.match(p.nodes['create-profile-message'].textContent, /a été créé/);
+  for (const id of ['profile-name', 'create-profile', 'load-profiles']) {
+    assert.equal(p.nodes[id].disabled, false);
+  }
+});
+
+test("la création refuse une clé ou un pseudo invalide avant envoi", async () => {
+  const p = page(() => { throw new Error('Aucun appel attendu'); });
+  for (const [key, name] of [['z'.repeat(64), 'Aldric'], [token, '   '], [token, 'a'.repeat(41)]]) {
+    p.nodes['host-key'].value = key;
+    p.nodes['profile-name'].value = name;
+    await p.run('createPlayerProfile({ preventDefault() {} })');
+  }
+  assert.equal(p.requests.length, 0);
+});
+
+test("un refus serveur conserve le pseudo et réactive le formulaire", async () => {
+  const p = page(async () => reply({ error: 'Authentification du meneur requise' }, 401));
+  p.nodes['host-key'].value = token;
+  p.nodes['profile-name'].value = 'Aldric';
+  await p.run('createPlayerProfile({ preventDefault() {} })');
+  assert.match(p.nodes['create-profile-message'].textContent, /Authentification/);
+  assert.equal(p.nodes['profile-name'].value, 'Aldric');
+  assert.equal(p.nodes['create-profile'].disabled, false);
+  assert.equal(p.nodes['load-profiles'].disabled, false);
+  assert.equal(p.requests.length, 1);
+});
+
+test("une création sans réponse reste incertaine et n'est pas renvoyée", async () => {
+  const p = page((url, options) => new Promise((resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+  }));
+  p.nodes['host-key'].value = token;
+  p.nodes['profile-name'].value = 'Aldric';
+  const operation = p.run('createPlayerProfile({ preventDefault() {} })');
+  p.deadlines[0].controller.abort(new Error('Timeout'));
+  await operation;
+  assert.match(p.nodes['create-profile-message'].textContent, /non confirmée/);
+  assert.equal(p.nodes['profile-name'].value, 'Aldric');
+  for (const id of ['profile-name', 'create-profile', 'load-profiles']) {
+    assert.equal(p.nodes[id].disabled, false);
+  }
+  assert.equal(p.requests.length, 1);
+});
