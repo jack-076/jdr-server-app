@@ -18,6 +18,10 @@ const createProfileForm = document.getElementById("create-profile-form");
 const profileNameInput = document.getElementById("profile-name");
 const createProfileButton = document.getElementById("create-profile");
 const createProfileMessage = document.getElementById("create-profile-message");
+const selectProfileForm = document.getElementById("select-profile-form");
+const playerProfileSelect = document.getElementById("player-profile");
+const selectProfileButton = document.getElementById("select-profile");
+const playerProfileMessage = document.getElementById("player-profile-message");
 
 let playerToken = null;
 let sessionRevision = 0;
@@ -30,6 +34,10 @@ function revokePlayerAccess() {
     joinInput.disabled = false;
     joinButton.disabled = false;
     checkAccessButton.disabled = true;
+    playerProfileSelect.replaceChildren();
+    playerProfileSelect.disabled = true;
+    selectProfileButton.disabled = true;
+    playerProfileMessage.textContent = "";
     playerMessage.textContent = "Accès expiré ou révoqué. Demande une nouvelle invitation.";
 }
 
@@ -245,6 +253,7 @@ async function joinSession(event) {
         playerMessage.textContent = `Partie rejointe. Joueur : ${result.playerId}`;
 
         await refreshSession();
+        await loadPlayerProfiles();
     }   catch (error) {
             playerMessage.textContent = "Réponse indisponible : la connexion n’a pas pu être confirmée.";
             console.error(error);
@@ -307,6 +316,10 @@ async function checkPlayerAccess({ silent = false} = {}) {
 
         if (playerMessage.textContent !== message) {
             playerMessage.textContent = message;
+        }
+
+        if (playerProfileSelect.disabled) {
+            await loadPlayerProfiles();
         }
 
         if (!silent) {
@@ -520,6 +533,68 @@ async function maintainPlayerPresence() {
   } finally {
     setTimeout(maintainPlayerPresence, 60000);
   }
+}
+
+async function loadPlayerProfiles() {
+    if (playerToken === null) {
+        return;
+    }
+
+    const checkedToken = playerToken;
+    playerProfileMessage.textContent = "Chargement des profils…";
+
+    try {
+        const response = await fetch("/api/profiles", {
+            headers: {
+                Authorization: `Bearer ${checkedToken}`,
+            },
+            cache: "no-store",
+            signal: AbortSignal.timeout(5000),
+        });
+
+        if (checkedToken !== playerToken) {
+            return;
+        }
+
+        if (response.status === 401) {
+            revokePlayerAccess();
+            return;
+        }
+
+        if (!response.ok) {
+            throw new Error(`Erreur HTTP ${response.status}`);
+        }
+
+        const result = await response.json();
+
+        if (checkedToken !== playerToken) {
+            return;
+        }
+
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Choisis ton profil";
+
+        playerProfileSelect.replaceChildren(placeholder);
+
+        for (const profile of result.profiles) {
+            const option = document.createElement("option");
+            option.value = profile.id;
+            option.textContent = profile.name;
+            playerProfileSelect.append(option);
+        }
+
+        playerProfileSelect.disabled = result.profiles.length === 0;
+        playerProfileMessage.textContent = result.profiles.length === 0
+            ? "Le meneur n’a pas encore créé de profil."
+            : "Profils chargés. La validation sera ajoutée à l’étape suivante.";
+    } catch (error) {
+        if (checkedToken === playerToken) {
+            playerProfileMessage.textContent =
+                "Impossible de charger les profils. Clique sur Vérifier mon accès pour réessayer.";
+        }
+        console.error(error);
+    }
 }
 
 loadInvitationFromUrl();

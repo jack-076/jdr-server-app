@@ -80,6 +80,16 @@
                     Vérifier mon accès
                 </button>
                 <p id="player-message" role="status"></p>
+                <form id="select-profile-form">
+                    <label for="player-profile">Ton profil</label>
+                    <select id="player-profile" required disabled>
+                        <option value="">Rejoins la partie pour choisir un profil</option>
+                    </select>
+                    <button id="select-profile" type="submit" disabled>
+                        Utiliser ce profil
+                    </button>
+                    <p id="player-profile-message" role="status"></p>
+                </form>
             </section>
         </main>
     </body>

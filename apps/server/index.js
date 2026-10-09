@@ -146,10 +146,10 @@ const server = http.createServer(async (request, response) => {
   );
 
   if (request.method === "GET" && url.pathname === "/api/profiles") {
-    if (!isHost(request)) {
+    if (!isHost(request) && !getPlayer(request)) {
       response.writeHead(401);
       response.end(JSON.stringify({
-        error: "Authentification du meneur requise",
+        error: "Authentification du meneur ou du joueur requise",
       }));
       return;
     }
@@ -341,6 +341,7 @@ const server = http.createServer(async (request, response) => {
     players.set(playerToken, {
       id: playerId,
       sessionId: session.id,
+      profileId: null,
       lastSeenAt: Date.now(),
     });
 
@@ -372,8 +373,110 @@ const server = http.createServer(async (request, response) => {
     response.writeHead(200);
     response.end(JSON.stringify({
       playerId: player.id,
+      profileId: player.profileId,
       session: getPublicSession(),
     }));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/session/profile") {
+    response.setHeader("Cache-Control", "no-store");
+
+    const player = getPlayer(request);
+
+    if (player === null) {
+      response.writeHead(401, { Connection: "close" });
+      response.end(JSON.stringify({
+        error: "Accès joueur invalide ou partie inactive",
+      }));
+      return;
+    }
+
+    const contentType = request.headers["content-type"]
+      ?.split(";")[0].trim().toLowerCase();
+
+    if (contentType !== "application/json") {
+      response.writeHead(415, { Connection: "close" });
+      response.end(JSON.stringify({
+        error: "Le contenu doit être envoyé en JSON.",
+      }));
+      return;
+    }
+
+    try {
+      const body = await readJson(request);
+
+      // L'accès peut avoir été révoqué pendant la lecture du corps.
+      if (getPlayer(request) !== player) {
+        response.writeHead(401);
+        response.end(JSON.stringify({
+          error: "Accès joueur invalide ou partie inactive",
+        }));
+        return;
+      }
+
+      if (
+        body === null ||
+        typeof body !== "object" ||
+        Array.isArray(body) ||
+        typeof body.profileId !== "string" ||
+        body.profileId.length === 0
+      ) {
+        response.writeHead(400);
+        response.end(JSON.stringify({
+          error: "Un identifiant de profil est requis.",
+        }));
+        return;
+      }
+      const profile = getProfiles().find(
+        (item) => item.id === body.profileId
+      );
+
+      if (!profile) {
+        response.writeHead(404);
+        response.end(JSON.stringify({
+          error: "Ce profil n'existe pas.",
+        }));
+        return;
+      }
+
+      const occupied = [...players.values()].some(
+        (other) => other.id !== player.id &&
+        other.profileId === profile.id
+      );
+
+      if (occupied) {
+        response.writeHead(409);
+        response.end(JSON.stringify({
+          error: "Ce profil est déjà utilisé par un autre joueur.",
+        }));
+        return;
+      }
+
+      player.profileId = profile.id;
+
+      response.writeHead(200);
+      response.end(JSON.stringify({
+        playerId: player.id,
+        profile,
+      }));
+    } catch (error) {
+      if (response.destroyed) {
+        return;
+      }
+
+      const statusCode = [400, 408, 413].includes(error.statusCode)
+        ? error.statusCode
+        : 500;
+
+      response.writeHead(statusCode, { Connection: "close" });
+      response.end(JSON.stringify({
+        error: statusCode === 500
+          ? "Impossible de sélectionner le profil."
+          : error.message,
+      }));
+    }
+
     return;
   }
 
