@@ -43,12 +43,21 @@ node apps/server/index.js
 Le serveur écoute sur `http://127.0.0.1:3000`, uniquement sur la machine locale.
 `Ctrl+C` l'arrête. Aucune dépendance externe n'est nécessaire à ce stade.
 
-Ouvrir cette adresse dans le navigateur. Le meneur saisit la clé affichée dans
-le terminal, démarre la partie puis génère une invitation à partager à un joueur.
-Le joueur ouvre le lien dans un autre onglet, puis confirme son entrée. Le secret
-du lien est lu depuis le fragment de l'URL, puis retiré de la barre d'adresse.
+Au lancement, le serveur ouvre automatiquement la page privée du meneur dans le
+navigateur par défaut (Windows ou Linux avec un environnement graphique). La clé
+est transmise dans le fragment du lien privé, retirée de la barre d'adresse puis
+conservée dans `sessionStorage` pour les rechargements du même onglet. Aucune saisie
+manuelle n'est nécessaire. Si l'ouverture échoue, ouvrir le lien privé affiché dans
+le terminal. Ce lien donne les droits du meneur et ne doit pas être partagé.
+
+Le meneur démarre la partie puis génère un lien joueur. Le joueur ouvre ce lien :
+l'invitation est échangée automatiquement contre un accès, puis il choisit son profil.
+Il n'a pas de clé à saisir ni de bouton de connexion à valider. Le secret du lien
+est retiré de la barre d'adresse. Une invitation refusée ou une réponse perdue ne
+provoque pas de nouvelle tentative automatique.
 Les changements d'état arrivent par événements SSE, sans actualisation périodique
-visible. Les liens utilisant `127.0.0.1` fonctionnent uniquement sur la même machine.
+visible. Le bouton d'actualisation a été retiré ; F5 reste disponible.
+Les liens utilisant `127.0.0.1` fonctionnent uniquement sur la même machine.
 
 Les fichiers web sont lus au lancement : redémarrer le serveur et recharger les
 pages après une modification HTML ou JavaScript côté navigateur.
@@ -69,9 +78,9 @@ Un démarrage ou un arrêt redondant renvoie `409`. Une route inconnue renvoie `
 L'état reste en mémoire et revient à `stopped` au redémarrage du serveur.
 
 Le démarrage, l'arrêt et la génération de l'invitation exigent l'en-tête
-`Authorization: Bearer <clé du meneur>`. Une clé aléatoire est affichée dans le
-terminal du serveur à chaque lancement ; elle doit rester privée et change au
-redémarrage. Un accès sans clé valide renvoie `401`.
+`Authorization: Bearer <clé du meneur>`. Une clé aléatoire est créée à chaque lancement et transmise par le lien
+privé du meneur ; elle change au redémarrage. Utiliser la nouvelle page ouverte
+par le serveur après un redémarrage. Un accès sans clé valide renvoie `401`.
 
 Chaque génération remplace l'invitation précédente. L'invitation est consommée
 après une entrée réussie et n'est jamais exposée dans les réponses publiques.
@@ -119,6 +128,7 @@ node --check apps/server/read-json.js
 node --check apps/web/app.js
 node tests/web-state.test.cjs
 node tests/profiles-api.test.cjs
+node tests/open-host-page.test.cjs
 ```
 
 Les tests simulent le navigateur et le réseau : ils couvrent les réponses retardées,

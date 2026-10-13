@@ -1,4 +1,5 @@
 const http = require("node:http");
+const { openHostPage } = require("./open-host-page");
 const { randomUUID, randomBytes, timingSafeEqual } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const path = require("node:path");
@@ -89,7 +90,7 @@ function getPlayer(request) {
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, "http://127.0.0.1:3000");
 
-  if (request.method === "GET" && url.pathname === "/") {
+  if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/host")) {
     response.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
@@ -490,5 +491,7 @@ setInterval(removeExpiredPlayers, 60 * 1000).unref();
 
 server.listen(3000, "127.0.0.1", () => {
     console.log("Serveur accessible sur http://127.0.0.1:3000");
-    console.log(`Clé du meneur : ${hostKey}`);
+    const hostUrl = `http://127.0.0.1:3000/host#host=${hostKey}`;
+    console.log(`Lien privé du meneur (ne pas partager) : ${hostUrl}`);
+    openHostPage(hostUrl);
 });

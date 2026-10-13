@@ -12,21 +12,11 @@
             <section aria-labelledby="session-title">
                 <h2 id="session-title">Partie actuelle</h2>
                 <p id="session-status">État non chargé</p>
-                <button id="refresh-session" type="button">
-                    Actualiser l'état
-                </button>
                 <a href="/api/session">Consulter les données de la partie</a>
             </section>
-            <section aria-labelledby="host-title">
+            <section id="host-controls" aria-labelledby="host-title" hidden>
                 <h2 id="host-title">Commandes du meneur</h2>
-                <label for="host-key">Clé du meneur</label>
-                <input
-                id="host-key"
-                type="password"
-                autocomplete="off"
-                spellcheck="false"
-                maxlength="64"
-                >
+                <input id="host-key" type="hidden">
                 <button id="start-session" type="button">Démarrer</button>
                 <button id="stop-session" type="button">Arrêter</button>
                 <button id="get-invitation" type="button">
@@ -62,9 +52,9 @@
                 <p id="profiles-message" role="status"></p>
                 <ul id="profiles-list"></ul>
             </section>
-            <section aria-labelledby="player-title">
+            <section id="player-controls" aria-labelledby="player-title">
                 <h2 id="player-title">Rejoindre comme joueur</h2>
-                <form id="join-form">
+                <form id="join-form" hidden>
                     <label for="join-token">Invitation reçue</label>
                     <input
                     id="join-token"
@@ -87,6 +77,12 @@
                     </select>
                     <button id="select-profile" type="submit" disabled>
                         Utiliser ce profil
+                    </button>
+                    <button id="change-profile" type="button" hidden>
+                        Changer de profil
+                    </button>
+                    <button id="cancel-profile-change" type="button" hidden>
+                        Annuler
                     </button>
                     <p id="player-profile-message" role="status"></p>
                 </form>

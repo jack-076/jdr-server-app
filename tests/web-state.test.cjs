@@ -24,7 +24,7 @@ async function flush() {
 }
 
 // Simule le DOM, le transport et l'horloge ; aucun serveur réel n'est modifié.
-function page(fetchHandler) {
+function page(fetchHandler, { savedToken = null, hash = "", pathname = "/", savedHostKey = null } = {}) {
   const writes = [];
   const nodes = Object.fromEntries([...html.matchAll(/id="([^"]+)"/g)].map((match) => {
     const id = match[1];
@@ -40,6 +40,9 @@ function page(fetchHandler) {
     }];
   }));
   const stored = new Map();
+  if (savedToken !== null) stored.set("jdr.playerToken", savedToken);
+  if (savedHostKey !== null) stored.set("jdr.hostKey", savedHostKey);
+  const historyWrites = [];
   const listeners = {};
   const requests = [];
   const deadlines = [];
@@ -50,8 +53,8 @@ function page(fetchHandler) {
       createElement(tag) { return { tag, textContent: "" }; },
     },
     window: {
-      location: { origin: "http://localhost:3000", hash: "", pathname: "/", search: "" },
-      history: { replaceState() {} },
+      location: { origin: "http://localhost:3000", hash, pathname, search: "" },
+      history: { replaceState(...args) { historyWrites.push(args); } },
     },
     sessionStorage: {
       getItem: (key) => stored.get(key) ?? null,
@@ -77,12 +80,12 @@ function page(fetchHandler) {
   });
   vm.runInContext(source, context);
   return {
-    nodes, stored, requests, deadlines, timers, writes,
+    nodes, stored, requests, deadlines, timers, writes, historyWrites,
     run: (code) => vm.runInContext(code, context),
     emit: (state) => listeners.session({ data: JSON.stringify(state) }),
     disconnect: () => listeners.error(),
     authenticate() {
-      vm.runInContext(`savePlayerToken("${token}")`, context);
+      vm.runInContext(`savePlayerToken("${token}"); playerProfilesLoaded = true`, context);
       nodes["check-access"].disabled = false;
       nodes["join-session"].disabled = true;
       nodes["join-token"].disabled = true;
@@ -141,7 +144,7 @@ test("une actualisation HTTP ancienne ne remplace pas un événement récent", a
   pending.resolve(reply(session));
   await refresh;
   assert.equal(p.nodes["session-status"].textContent, "Partie arrêtée");
-  assert.equal(p.nodes["refresh-session"].disabled, false);
+  assert.equal(p.run("sessionRefreshPending"), false);
 });
 
 test("une erreur HTTP ancienne ne masque pas l'état SSE récent", async () => {
@@ -266,4 +269,160 @@ test("une création sans réponse reste incertaine et n'est pas renvoyée", asyn
     assert.equal(p.nodes[id].disabled, false);
   }
   assert.equal(p.requests.length, 1);
+});
+
+test("le bouton envoie le profil en JSON avec l'accès joueur et bloque les doubles envois", async () => {
+  const pending = deferred();
+  const p = page(() => pending.promise);
+  p.authenticate();
+  p.nodes['player-profile'].disabled = false;
+  p.nodes['player-profile'].value = 'profile-one';
+  p.nodes['player-profile'].listeners.change();
+  assert.equal(p.nodes['select-profile'].disabled, false);
+  let prevented = false;
+  const submit = () => p.nodes['select-profile-form'].listeners.submit({
+    preventDefault() { prevented = true; },
+  });
+  const operation = submit();
+  await submit();
+  assert.equal(prevented, true);
+  assert.equal(p.requests.length, 1);
+  assert.equal(p.nodes['select-profile'].disabled, true);
+  const { url, options } = p.requests[0];
+  assert.equal(url, '/api/session/profile');
+  assert.equal(options.method, 'POST');
+  assert.equal(options.headers.Authorization, `Bearer ${token}`);
+  assert.equal(options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(options.body), { profileId: 'profile-one' });
+  pending.resolve(reply({ profile: { id: 'profile-one', name: 'Aldric' } }));
+  await operation;
+  assert.equal(p.nodes['player-profile-message'].textContent, 'Tu utilises le profil "Aldric".');
+  assert.equal(p.nodes['select-profile'].disabled, true);
+  assert.equal(p.nodes['select-profile'].hidden, true);
+  assert.equal(p.nodes['player-profile'].disabled, true);
+  assert.equal(p.nodes['change-profile'].hidden, false);
+});
+
+
+test("le rechargement retrouve le profil même si le navigateur restaure un menu actif", async () => {
+  const p = page(async (url) => {
+    if (url === '/api/session/me') {
+      return reply({ playerId: 'player-one', profileId: 'profile-one', session });
+    }
+    assert.equal(url, '/api/profiles');
+    return reply({ profiles: [{ id: 'profile-one', name: 'Aldric' }] });
+  }, { savedToken: token });
+  await flush();
+  assert.equal(p.nodes['player-profile'].value, 'profile-one');
+  assert.equal(p.nodes['player-profile-message'].textContent, 'Tu utilises le profil "Aldric".');
+  assert.equal(p.requests.length, 2);
+});
+
+
+function playerWithProfile(fetchHandler) {
+  const p = page(fetchHandler);
+  p.authenticate();
+  p.run('currentPlayerProfile = { id: "old", name: "Aldric" }; updateSelectProfileButton()');
+  p.nodes['player-profile'].value = 'old';
+  return p;
+}
+
+test("annuler le changement retrouve le profil actuel sans requête", () => {
+  const p = playerWithProfile(() => { throw new Error('Aucune requête attendue'); });
+  p.nodes['change-profile'].listeners.click();
+  assert.equal(p.nodes['player-profile'].disabled, false);
+  assert.equal(p.nodes['cancel-profile-change'].hidden, false);
+  p.nodes['player-profile'].value = 'new';
+  p.nodes['cancel-profile-change'].listeners.click();
+  assert.equal(p.nodes['player-profile'].value, 'old');
+  assert.equal(p.nodes['player-profile'].disabled, true);
+  assert.equal(p.nodes['change-profile'].hidden, false);
+  assert.equal(p.nodes['cancel-profile-change'].hidden, true);
+  assert.equal(p.run('currentPlayerProfile.id'), 'old');
+  assert.equal(p.requests.length, 0);
+});
+
+for (const accepted of [true, false]) {
+  test(accepted ? "le changement confirmé remplace le profil" : "un profil occupé conserve le profil actuel", async () => {
+    const pending = deferred();
+    const p = playerWithProfile(() => pending.promise);
+    p.nodes['change-profile'].listeners.click();
+    p.nodes['player-profile'].value = 'new';
+    p.nodes['player-profile'].listeners.change();
+    const operation = p.nodes['select-profile-form'].listeners.submit({ preventDefault() {} });
+    assert.equal(p.nodes['cancel-profile-change'].disabled, true);
+    assert.equal(p.nodes['player-profile'].disabled, true);
+    p.nodes['cancel-profile-change'].listeners.click();
+    assert.equal(p.run('profileChangeMode'), true);
+    pending.resolve(accepted
+      ? reply({ profile: { id: 'new', name: 'Mira' } })
+      : reply({ error: 'Ce profil est déjà utilisé par un autre joueur.' }, 409));
+    await operation;
+    assert.equal(p.run('currentPlayerProfile.id'), accepted ? 'new' : 'old');
+    assert.equal(p.run('profileChangeMode'), !accepted);
+    assert.equal(p.nodes['player-profile'].disabled, accepted);
+    if (!accepted) {
+      assert.match(p.nodes['player-profile-message'].textContent, /déjà utilisé/);
+      p.nodes['cancel-profile-change'].listeners.click();
+      assert.equal(p.nodes['player-profile'].value, 'old');
+    }
+  });
+}
+
+test("une confirmation tardive ne restaure pas le profil après l'arrêt", async () => {
+  const pending = deferred();
+  const p = playerWithProfile(() => pending.promise);
+  p.nodes['change-profile'].listeners.click();
+  p.nodes['player-profile'].value = 'new';
+  const operation = p.nodes['select-profile-form'].listeners.submit({ preventDefault() {} });
+  p.emit({ id: null, status: 'stopped' });
+  pending.resolve(reply({ profile: { id: 'new', name: 'Mira' } }));
+  await operation;
+  assert.equal(p.run('currentPlayerProfile'), null);
+  assert.equal(p.nodes['player-profile'].disabled, true);
+  assert.equal(p.nodes['change-profile'].hidden, true);
+  assert.equal(p.nodes['cancel-profile-change'].hidden, true);
+});
+
+
+test("le lien joueur connecte automatiquement et retire le secret de l'URL", async () => {
+  const invitation = 'b'.repeat(64);
+  const p = page(async (url, options) => {
+    if (url === '/api/session/join') {
+      assert.equal(options.headers.Authorization, `Bearer ${invitation}`);
+      return reply({ playerId: 'one', playerToken: token, session }, 201);
+    }
+    if (url === '/api/session') return reply(session);
+    if (url === '/api/profiles') return reply({ profiles: [] });
+    throw new Error(`Route inattendue: ${url}`);
+  }, { hash: `#invitation=${invitation}` });
+  await flush();
+  assert.equal(p.stored.get('jdr.playerToken'), token);
+  assert.equal(p.requests.filter(r => r.url === '/api/session/join').length, 1);
+  assert.equal(p.historyWrites[0][2], '/');
+  assert.equal(p.nodes['host-controls'].hidden, true);
+});
+
+test("une invitation refusée ne provoque pas de nouvelle tentative automatique", async () => {
+  const p = page(async () => reply({ error: 'Invitation consommée' }, 401), {
+    hash: `#invitation=${'b'.repeat(64)}`,
+  });
+  await flush();
+  assert.equal(p.requests.length, 1);
+  assert.match(p.nodes['player-message'].textContent, /consommée/);
+});
+
+test("la page privée initialise l'accès MJ sans requête et le retrouve après F5", () => {
+  const noFetch = () => { throw new Error('Aucune requête attendue'); };
+  const p = page(noFetch, { pathname: '/host', hash: `#host=${token}` });
+  assert.equal(p.nodes['host-key'].value, token);
+  assert.equal(p.nodes['host-controls'].hidden, false);
+  assert.equal(p.nodes['player-controls'].hidden, true);
+  assert.equal(p.stored.get('jdr.hostKey'), token);
+  assert.equal(p.historyWrites[0][2], '/host');
+  const reloaded = page(noFetch, { pathname: '/host', savedHostKey: token });
+  assert.equal(reloaded.nodes['host-key'].value, token);
+  const player = page(noFetch, { savedHostKey: token });
+  assert.equal(player.nodes['host-key'].value, '');
+  assert.equal(player.nodes['host-controls'].hidden, true);
 });
