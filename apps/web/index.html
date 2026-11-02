@@ -4,19 +4,41 @@
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>JDR — Gestion de partie</title>
+        <link rel="stylesheet" href="/style.css">
+        <script src="/grid.js" defer></script>
         <script src="/app.js" defer></script>
+        <script src="/board.js" defer></script>
+        <script src="/map.js" defer></script>
+        <script src="/tokens.js" defer></script>
     </head>
     <body>
-        <main>
-            <h1>Gestion de partie</h1>
-            <section aria-labelledby="session-title">
-                <h2 id="session-title">Partie actuelle</h2>
-                <p id="session-status">État non chargé</p>
-                <a href="/api/session">Consulter les données de la partie</a>
+        <main id="app-layout" class="app-layout">
+            <header class="campaign-header">
+                <p class="eyebrow">Table de jeu de rôle</p>
+                <h1 id="campaign-title">Campagne</h1>
+                <p id="campaign-message" role="status"></p>
+            </header>
+            <section id="campaign-overview" class="panel" aria-labelledby="description-title">
+                <p class="eyebrow">L'univers de la partie</p>
+                <h2 id="description-title">La campagne</h2>
+                <p id="campaign-description"></p>
             </section>
-            <section id="host-controls" aria-labelledby="host-title" hidden>
+            <section class="panel session-panel" aria-labelledby="session-title">
+                <h2 id="session-title">État de la partie</h2>
+                <p id="session-status" role="status">Connexion au serveur...</p>
+                <button id="open-table" type="button" disabled>Ouvrir la table</button>
+            </section>
+            <section id="host-controls" class="panel" aria-labelledby="host-title" hidden>
                 <h2 id="host-title">Commandes du meneur</h2>
                 <input id="host-key" type="hidden">
+                <form id="host-profile-form">
+                    <label for="host-profile-select">Profil du meneur</label>
+                    <select id="host-profile-select" required disabled>
+                        <option value="">Chargement des profils...</option>
+                    </select>
+                    <button id="use-host-profile" type="submit" disabled>Utiliser comme meneur</button>
+                    <p id="host-profile-message" role="status"></p>
+                </form>
                 <button id="start-session" type="button">Démarrer</button>
                 <button id="stop-session" type="button">Arrêter</button>
                 <button id="get-invitation" type="button">
@@ -31,6 +53,28 @@
                 spellcheck="false"
                 >
                 <p id="host-message" role="status"></p>
+                <h3>Informations de campagne</h3>
+                <form id="campaign-form">
+                    <label for="campaign-title-input">Titre</label>
+                    <input
+                        id="campaign-title-input"
+                        type="text"
+                        maxlength="100"
+                        required
+                    >
+
+                    <label for="campaign-description-input">Description</label>
+                    <textarea
+                        id="campaign-description-input"
+                        rows="5"
+                        maxlength="2000"
+                    ></textarea>
+
+                    <button id="save-campaign" type="submit" disabled>
+                        Enregistrer la campagne
+                    </button>
+                    <p id="campaign-save-message" role="status"></p>
+                </form>
                 <h3>Profils joueurs</h3>
                 <form id="create-profile-form">
                     <label for="profile-name">Pseudo du joueur</label>
@@ -52,8 +96,9 @@
                 <p id="profiles-message" role="status"></p>
                 <ul id="profiles-list"></ul>
             </section>
-            <section id="player-controls" aria-labelledby="player-title">
-                <h2 id="player-title">Rejoindre comme joueur</h2>
+            <section id="player-controls" class="panel" aria-labelledby="player-title">
+                <p class="eyebrow">Rejoindre la table</p>
+                <h2 id="player-title">Choisis ton profil</h2>
                 <form id="join-form" hidden>
                     <label for="join-token">Invitation reçue</label>
                     <input
@@ -66,7 +111,7 @@
                     >
                     <button id="join-session" type="submit">Rejoindre</button>
                 </form>
-                <button id="check-access" type="button" disabled>
+                <button id="check-access" class="secondary" type="button" disabled>
                     Vérifier mon accès
                 </button>
                 <p id="player-message" role="status"></p>
@@ -81,12 +126,59 @@
                     <button id="change-profile" type="button" hidden>
                         Changer de profil
                     </button>
-                    <button id="cancel-profile-change" type="button" hidden>
+                    <button id="cancel-profile-change" class="secondary" type="button" hidden>
                         Annuler
                     </button>
                     <p id="player-profile-message" role="status"></p>
                 </form>
             </section>
         </main>
+        <section id="game-table" class="game-table" aria-labelledby="table-title" hidden>
+            <header class="table-toolbar">
+                <div class="table-heading">
+                    <p class="eyebrow">Table de jeu</p>
+                    <h1 id="table-title" tabindex="-1">Campagne</h1>
+                </div>
+                <nav class="table-actions" aria-label="Navigation de la table">
+                    <button id="map-choose" type="button" hidden>Importer une carte</button>
+                    <button id="map-training" class="secondary" type="button" hidden>Terrain d'entraînement</button>
+                    <input id="map-file" type="file" accept="image/png,image/jpeg" hidden>
+                    <button id="table-change-profile" class="secondary" type="button" hidden>Changer de profil</button>
+                    <button id="back-to-lobby" class="secondary" type="button">Retour à l'accueil</button>
+                </nav>
+            </header>
+            <div class="board-navigation" aria-label="Vue du plateau">
+                <button id="board-reset" class="secondary" type="button">Recentrer</button>
+                <p id="board-help">Molette : zoom. Clic droit : déplacer la vue. Pion : maintenir le clic gauche puis relâcher sur une case. Clavier : flèches, +, -, 0.</p>
+                <p id="map-status" role="status"></p>
+            </div>
+            <section id="token-manager" class="token-manager" aria-label="Gestion des pions" hidden>
+                <form id="token-form">
+                    <label for="token-name">Nom du pion</label>
+                    <input id="token-name" type="text" maxlength="40" required disabled>
+                    <label for="token-owner">Contrôlé par</label>
+                    <select id="token-owner" disabled>
+                        <option value="">Meneur uniquement</option>
+                    </select>
+                    <button id="token-create" type="submit" disabled>Ajouter un pion</button>
+                    <button id="token-delete" class="secondary" type="button" disabled>Supprimer le pion sélectionné</button>
+                </form>
+            </section>
+            <p id="token-status" class="token-status" role="status"></p>
+            <div id="board-viewport" class="empty-board" tabindex="0" role="region" aria-label="Plateau de jeu" aria-describedby="board-help">
+                <img id="board-map" class="board-map" alt="Carte de la partie" draggable="false" hidden>
+                <div id="board-grid" class="board-grid" aria-hidden="true"></div>
+                <div id="board-tokens" class="board-tokens"></div>
+                <div id="board-empty-message" class="board-message">
+                    <p class="eyebrow">Plateau</p>
+                    <h2>Aucune scène chargée</h2>
+                    <p>Les cartes et les tokens seront ajoutés à une prochaine étape.</p>
+                </div>
+            </div>
+            <footer class="table-footer">
+                <p id="table-profile"></p>
+                <p id="table-session-status" role="status"></p>
+            </footer>
+        </section>
     </body>
 </html>

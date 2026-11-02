@@ -1,3 +1,11 @@
+const campaignTitle = document.getElementById("campaign-title");
+const campaignDescription = document.getElementById("campaign-description");
+const campaignMessage = document.getElementById("campaign-message");
+const campaignForm = document.getElementById("campaign-form");
+const campaignTitleInput = document.getElementById("campaign-title-input");
+const campaignDescriptionInput = document.getElementById("campaign-description-input");
+const saveCampaignButton = document.getElementById("save-campaign");
+const campaignSaveMessage = document.getElementById("campaign-save-message");
 const statusElement = document.getElementById("session-status");
 let sessionRefreshPending = false;
 const hostKeyInput = document.getElementById("host-key");
@@ -25,6 +33,20 @@ const playerProfileMessage = document.getElementById("player-profile-message");
 const changeProfileButton = document.getElementById("change-profile");
 const cancelProfileChangeButton = document.getElementById("cancel-profile-change");
 
+const gameTable = document.getElementById("game-table");
+const openTableButton = document.getElementById("open-table");
+const tableTitle = document.getElementById("table-title");
+const tableProfile = document.getElementById("table-profile");
+const tableSessionStatus = document.getElementById("table-session-status");
+const tableChangeProfileButton = document.getElementById("table-change-profile");
+let tableRequested = false;
+
+const hostProfileForm = document.getElementById("host-profile-form");
+const hostProfileSelect = document.getElementById("host-profile-select");
+const useHostProfileButton = document.getElementById("use-host-profile");
+const hostProfileMessage = document.getElementById("host-profile-message");
+let currentHostProfile = null;
+
 let playerToken = null;
 let sessionRevision = 0;
 let accessCheckPending = false;
@@ -33,6 +55,7 @@ let profileSelectionPending = false;
 let playerProfilesLoaded = false;
 let currentPlayerProfile = null;
 let profileChangeMode = false;
+let campaignLoadVersion = 0;
 
 function revokePlayerAccess() {
     savePlayerToken(null);
@@ -53,6 +76,14 @@ function revokePlayerAccess() {
 
 function savePlayerToken(token) {
     playerToken = token;
+    if (window.MapView) {
+        if (token === null) window.MapView.clear();
+        else void window.MapView.refresh();
+    }
+    if (window.TokenView) {
+        if (token === null) window.TokenView.clear();
+        else void window.TokenView.refresh();
+    }
 
     try {
         if (token === null) {
@@ -87,6 +118,7 @@ function restorePlayerToken() {
     checkAccessButton.disabled = false;
 
     playerMessage.textContent = "Vérification de l'accès enregistré ...";
+    void loadCampaign(playerToken);
 }
 
 
@@ -261,6 +293,7 @@ async function joinSession(event) {
         checkAccessButton.disabled = false;
 
         playerMessage.textContent = `Partie rejointe. Joueur : ${result.playerId}`;
+        void loadCampaign(playerToken);
 
         await refreshSession();
         await loadPlayerProfiles();
@@ -485,6 +518,9 @@ async function createPlayerProfile(event) {
 
         loadProfilesButton.disabled = false;
         await loadProfiles();
+        if (window.location.pathname === "/host") {
+            await loadHostProfile({ openCurrent: false });
+        }
     } catch (error) {
         createProfileMessage.textContent =
             "Création non confirmée. Charge les profils avant de réessayer.";
@@ -506,7 +542,7 @@ joinForm.addEventListener("submit", joinSession);
 selectProfileForm.addEventListener("submit", selectPlayerProfile);
 playerProfileSelect.addEventListener("change", updateSelectProfileButton);
 
-changeProfileButton.addEventListener("click", () => {
+function beginProfileChange() {
     if (currentPlayerProfile === null || profileSelectionPending) {
         return;
     }
@@ -515,8 +551,14 @@ changeProfileButton.addEventListener("click", () => {
     updateSelectProfileButton();
     playerProfileMessage.textContent =
         "Choisis un autre profil, puis confirme le changement.";
+    showTable(false);
     playerProfileSelect.focus();
-});
+}
+
+changeProfileButton.addEventListener("click", beginProfileChange);
+tableChangeProfileButton.addEventListener("click", beginProfileChange);
+openTableButton.addEventListener("click", () => showTable(true));
+document.getElementById("back-to-lobby").addEventListener("click", () => showTable(false));
 
 cancelProfileChangeButton.addEventListener("click", () => {
     if (currentPlayerProfile === null || profileSelectionPending) {
@@ -528,10 +570,26 @@ cancelProfileChangeButton.addEventListener("click", () => {
     updateSelectProfileButton();
     playerProfileMessage.textContent =
         `Tu utilises le profil "${currentPlayerProfile.name}".`;
+    showTable(true);
 });
 
 function connectSessionEvents() {
   const events = new EventSource("/api/events");
+
+  const refreshPlayerCampaign = () => {
+    if (window.location.pathname !== "/host" && playerToken !== null) {
+      void loadCampaign(playerToken, { silent: true });
+    }
+  };
+
+  events.addEventListener("campaign-updated", refreshPlayerCampaign);
+  events.addEventListener("map-updated", () => { if (window.MapView) void window.MapView.refresh(); });
+  events.addEventListener("map-updated", () => { if (window.TokenView) void window.TokenView.refresh(); });
+  events.addEventListener("tokens-updated", () => { if (window.TokenView) void window.TokenView.refresh(); });
+  // Recharge aussi après une reconnexion pour rattraper les changements manqués.
+  events.addEventListener("open", refreshPlayerCampaign);
+  events.addEventListener("open", () => { if (window.MapView) void window.MapView.refresh(); });
+  events.addEventListener("open", () => { if (window.TokenView) void window.TokenView.refresh(); });
 
   events.addEventListener("session", (event) => {
     const session = JSON.parse(event.data);
@@ -546,6 +604,8 @@ function connectSessionEvents() {
       statusElement.textContent = message;
     }
 
+    updateTableState();
+
     if (session.status === "stopped" && playerToken !== null) {
       revokePlayerAccess();
     } else if (playerToken !== null) {
@@ -557,6 +617,7 @@ function connectSessionEvents() {
     sessionRevision += 1;
     statusElement.textContent =
       "Connexion interrompue. Reconnexion en cours…";
+    updateTableState();
   });
 }
 
@@ -640,6 +701,7 @@ async function loadPlayerProfiles(selectedProfileId = null) {
         }
 
         updateSelectProfileButton();
+        if (currentProfile) showTable(true);
 
     } catch (error) {
         if (checkedToken === playerToken) {
@@ -676,6 +738,8 @@ function updateSelectProfileButton() {
     cancelProfileChangeButton.hidden =
         !connected || !hasProfile || !profileChangeMode;
     cancelProfileChangeButton.disabled = profileSelectionPending;
+    updateTableState();
+    if (window.TokenView) window.TokenView.updatePermissions();
 }
 
 async function selectPlayerProfile(event) {
@@ -734,6 +798,7 @@ async function selectPlayerProfile(event) {
         profileChangeMode = false;
         playerProfileMessage.textContent =
             `Tu utilises le profil "${result.profile.name}".`;
+        showTable(true);
 
     } catch (error) {
         if (checkedToken === playerToken) {
@@ -757,7 +822,11 @@ maintainPlayerPresence();
 
 
 function initializeHostAccess() {
+    updateTableState();
     const isHostPage = window.location.pathname === "/host";
+    document.getElementById("app-layout").className = isHostPage
+        ? "app-layout host-page"
+        : "app-layout";
     document.getElementById("host-controls").hidden = !isHostPage;
     document.getElementById("player-controls").hidden = isHostPage;
     if (!isHostPage) return;
@@ -779,7 +848,240 @@ function initializeHostAccess() {
     if (typeof key === "string" && /^[a-f0-9]{64}$/.test(key)) {
         hostKeyInput.value = key;
         hostMessage.textContent = "Accès du meneur prêt.";
+        updateTableState();
+        void loadCampaign(key);
+        void loadHostProfile();
     } else {
         hostMessage.textContent = "Ouvre le lien privé affiché au lancement du serveur.";
     }
 }
+
+async function loadCampaign(key, { silent = false } = {}) {
+    if (typeof key !== "string" || !/^[a-f0-9]{64}$/.test(key)) {
+        return;
+    }
+
+    const version = ++campaignLoadVersion;
+    const isCurrent = () => version === campaignLoadVersion && (
+        window.location.pathname === "/host"
+            ? key === hostKeyInput.value
+            : key === playerToken
+    );
+
+    if (!silent) {
+        campaignMessage.textContent = "Chargement de la campagne...";
+    }
+
+    try {
+        const response = await fetch("/api/campaign", {
+            headers: {
+                Authorization: `Bearer ${key}`,
+            },
+            cache: "no-store",
+            signal: AbortSignal.timeout(5000),
+        });
+
+        if (!isCurrent()) {
+            return;
+        }
+
+        if (!response.ok) {
+            throw new Error(`Erreur HTTP ${response.status}`);
+        }
+
+        const result = await response.json();
+
+        if (!isCurrent()) {
+            return;
+        }
+
+        campaignTitle.textContent = result.campaign.title;
+        campaignDescription.textContent = result.campaign.description;
+        updateTableState();
+        campaignMessage.textContent = "";
+
+        if (window.location.pathname === "/host") {
+            campaignTitleInput.value = result.campaign.title;
+            campaignDescriptionInput.value = result.campaign.description;
+            saveCampaignButton.disabled = false;
+        }
+
+    } catch (error) {
+        if (isCurrent()) {
+            campaignMessage.textContent =
+                "Impossible de charger la campagne. Recharge la page pour réessayer.";
+        }
+        console.error(error);
+    }
+}
+
+async function saveCampaign(event) {
+    event.preventDefault();
+
+    if (saveCampaignButton.disabled) {
+        return;
+    }
+
+    const key = hostKeyInput.value.trim();
+    const title = campaignTitleInput.value.trim();
+    const description = campaignDescriptionInput.value;
+
+    if (!/^[a-f0-9]{64}$/.test(key)) {
+        campaignSaveMessage.textContent =
+            "Ouvre la page privée du meneur depuis le lancement du serveur.";
+        return;
+    }
+
+    if (title.length < 1 || title.length > 100 || description.length > 2000) {
+        campaignSaveMessage.textContent =
+            "Le titre doit contenir entre 1 et 100 caractères, et la description au maximum 2000.";
+        return;
+    }
+
+    saveCampaignButton.disabled = true;
+    campaignTitleInput.disabled = true;
+    campaignDescriptionInput.disabled = true;
+    campaignSaveMessage.textContent = "Enregistrement...";
+
+    try {
+        const response = await fetch("/api/campaign", {
+            method: "PUT",
+            headers: {
+                Authorization: `Bearer ${key}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ title, description }),
+            signal: AbortSignal.timeout(5000),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            campaignSaveMessage.textContent =
+                result.error || "Impossible de sauvegarder la campagne.";
+            return;
+        }
+
+        campaignTitle.textContent = result.campaign.title;
+        campaignDescription.textContent = result.campaign.description;
+        updateTableState();
+        campaignTitleInput.value = result.campaign.title;
+        campaignDescriptionInput.value = result.campaign.description;
+        campaignSaveMessage.textContent = "Campagne enregistrée.";
+    } catch (error) {
+        campaignSaveMessage.textContent =
+            "Enregistrement non confirmé. Recharge la page pour vérifier la sauvegarde.";
+        console.error(error);
+    } finally {
+        saveCampaignButton.disabled = false;
+        campaignTitleInput.disabled = false;
+        campaignDescriptionInput.disabled = false;
+    }
+}
+
+campaignForm.addEventListener("submit", saveCampaign);
+
+
+function updateTableState() {
+    const isHost = window.location.pathname === "/host" &&
+        /^[a-f0-9]{64}$/.test(hostKeyInput.value);
+    const hasProfile = playerToken !== null && currentPlayerProfile !== null;
+    const allowed = isHost ? currentHostProfile !== null : hasProfile;
+    if (!allowed) tableRequested = false;
+
+    openTableButton.disabled = !allowed || profileSelectionPending || profileChangeMode;
+    gameTable.hidden = !tableRequested;
+    document.getElementById("app-layout").hidden = tableRequested;
+    tableTitle.textContent = campaignTitle.textContent;
+    tableProfile.textContent = isHost
+        ? currentHostProfile ? `${currentHostProfile.name} (MJ)` : ""
+        : hasProfile ? currentPlayerProfile.name : "";
+    tableSessionStatus.textContent = statusElement.textContent;
+    tableChangeProfileButton.hidden = isHost || !hasProfile;
+    tableChangeProfileButton.disabled = profileSelectionPending;
+}
+
+function showTable(open) {
+    tableRequested = open;
+    updateTableState();
+    if (!gameTable.hidden) {
+        tableTitle.focus();
+        document.getElementById("board-viewport").dispatchEvent(new Event("table-opened"));
+    }
+}
+
+
+async function loadHostProfile({ openCurrent = true } = {}) {
+    const key = hostKeyInput.value;
+    try {
+        const options = {
+            headers: { Authorization: `Bearer ${key}` },
+            cache: "no-store",
+            signal: AbortSignal.timeout(5000),
+        };
+        const [profilesResponse, currentResponse] = await Promise.all([
+            fetch("/api/profiles", options),
+            fetch("/api/host/profile", options),
+        ]);
+        if (!profilesResponse.ok || !currentResponse.ok) throw new Error("Accès au profil MJ refusé");
+        const [profilesResult, currentResult] = await Promise.all([
+            profilesResponse.json(), currentResponse.json(),
+        ]);
+        const profiles = profilesResult.profiles;
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "Choisis ton profil de meneur";
+        hostProfileSelect.replaceChildren(placeholder);
+        for (const profile of profiles) {
+            const option = document.createElement("option");
+            option.value = profile.id;
+            option.textContent = profile.role === "host" ? `${profile.name} (meneur)` : profile.name;
+            hostProfileSelect.append(option);
+        }
+        currentHostProfile = currentResult.profile;
+        hostProfileSelect.value = currentHostProfile?.id || "";
+        hostProfileSelect.disabled = profiles.length === 0;
+        useHostProfileButton.disabled = profiles.length === 0;
+        hostProfileMessage.textContent = currentHostProfile
+            ? `Profil actif : "${currentHostProfile.name}". Droits de meneur.`
+            : profiles.length ? "Choisis ton profil pour ouvrir la table. Il sera réservé au meneur." : "Crée d'abord un profil dans la liste ci-dessous.";
+        updateTableState();
+        if (currentHostProfile && openCurrent) showTable(true);
+    } catch (error) {
+        hostProfileMessage.textContent = "Impossible de charger le profil du meneur. Recharge la page pour réessayer.";
+        console.error(error);
+    }
+}
+
+hostProfileForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (useHostProfileButton.disabled || !hostProfileSelect.value) return;
+    useHostProfileButton.disabled = true;
+    hostProfileSelect.disabled = true;
+    hostProfileMessage.textContent = "Sélection du profil...";
+    try {
+        const response = await fetch("/api/host/profile", {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${hostKeyInput.value}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ profileId: hostProfileSelect.value }),
+            signal: AbortSignal.timeout(5000),
+        });
+        const result = await response.json();
+        if (!response.ok) {
+            hostProfileMessage.textContent = result.error || "Sélection refusée.";
+            return;
+        }
+        currentHostProfile = result.profile;
+        hostProfileMessage.textContent = `Profil actif : "${currentHostProfile.name}". Droits de meneur.`;
+        showTable(true);
+    } catch (error) {
+        hostProfileMessage.textContent = "Sélection non confirmée. Recharge la page pour vérifier.";
+        console.error(error);
+    } finally {
+        useHostProfileButton.disabled = false;
+        hostProfileSelect.disabled = false;
+    }
+});

@@ -25,14 +25,15 @@ try {
       profile.id.length > 0 &&
       typeof profile.name === "string" &&
       profile.name.trim().length > 0 &&
-      profile.name.length <= 40
+      profile.name.length <= 40 &&
+      (profile.role === undefined || ["player", "host"].includes(profile.role))
     ) ||
     new Set(savedProfiles.map((profile) => profile.id)).size !== savedProfiles.length
   ) {
     throw new Error("Le fichier des profils contient des données invalides.");
   }
 
-  profiles = savedProfiles;
+  profiles = savedProfiles.map((profile) => ({ ...profile, role: profile.role || "player" }));
 } catch (error) {
   if (error.code !== "ENOENT") {
     throw error;
@@ -43,6 +44,7 @@ function getProfiles() {
   return profiles.map((profile) => ({
     id: profile.id,
     name: profile.name,
+    role: profile.role,
   }));
 }
 
@@ -60,6 +62,7 @@ function createProfile(name) {
   const profile = {
     id: randomUUID(),
     name: trimmedName,
+    role: "player",
   };
 
   const updatedProfiles = [...profiles, profile];
@@ -79,4 +82,22 @@ function createProfile(name) {
   return { ...profile };
 }
 
-module.exports = { getProfiles, createProfile };
+function assignHostRole(id) {
+  const profile = profiles.find((item) => item.id === id);
+  if (!profile) return null;
+  if (profile.role === "host") return { ...profile };
+
+  const updatedProfiles = profiles.map((item) =>
+    item.id === id ? { ...item, role: "host" } : item
+  );
+  mkdirSync(dataDirectory, { recursive: true, mode: 0o700 });
+  const temporaryFile = `${profilesFile}.tmp`;
+  writeFileSync(temporaryFile, JSON.stringify(updatedProfiles, null, 2), {
+    encoding: "utf8", mode: 0o600,
+  });
+  renameSync(temporaryFile, profilesFile);
+  profiles = updatedProfiles;
+  return { ...profiles.find((item) => item.id === id) };
+}
+
+module.exports = { getProfiles, createProfile, assignHostRole };

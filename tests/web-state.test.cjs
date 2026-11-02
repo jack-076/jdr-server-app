@@ -24,7 +24,7 @@ async function flush() {
 }
 
 // Simule le DOM, le transport et l'horloge ; aucun serveur réel n'est modifié.
-function page(fetchHandler, { savedToken = null, hash = "", pathname = "/", savedHostKey = null } = {}) {
+function page(fetchHandler, { savedToken = null, hash = "", pathname = "/", savedHostKey = null, hostProfile = { id: "host-profile", name: "MJ", role: "host" } } = {}) {
   const writes = [];
   const nodes = Object.fromEntries([...html.matchAll(/id="([^"]+)"/g)].map((match) => {
     const id = match[1];
@@ -36,6 +36,7 @@ function page(fetchHandler, { savedToken = null, hash = "", pathname = "/", save
       get textContent() { return text; },
       set textContent(value) { text = value; writes.push([id, value]); },
       focus() {},
+      dispatchEvent() {},
       addEventListener(event, callback) { this.listeners[event] = callback; },
     }];
   }));
@@ -61,10 +62,10 @@ function page(fetchHandler, { savedToken = null, hash = "", pathname = "/", save
       setItem: (key, value) => stored.set(key, value),
       removeItem: (key) => stored.delete(key),
     },
-    URL, URLSearchParams,
+    URL, URLSearchParams, Event: class { constructor(type) { this.type = type; } },
     EventSource: class {
       constructor(url) { assert.equal(url, "/api/events"); }
-      addEventListener(event, callback) { listeners[event] = callback; }
+      addEventListener(event, callback) { (listeners[event] ||= []).push(callback); }
     },
     AbortSignal: { timeout(ms) {
       const controller = new AbortController();
@@ -75,6 +76,12 @@ function page(fetchHandler, { savedToken = null, hash = "", pathname = "/", save
     console: { error() {}, warn() {} },
     fetch(url, options) {
       requests.push({ url, options });
+      if (pathname === '/host' && !options.method && url === '/api/profiles') {
+        return Promise.resolve(reply({ profiles: [{ id: 'host-profile', name: 'MJ', role: 'host' }] }));
+      }
+      if (pathname === '/host' && !options.method && url === '/api/host/profile') {
+        return Promise.resolve(reply({ profile: hostProfile }));
+      }
       return fetchHandler(url, options);
     },
   });
@@ -82,8 +89,10 @@ function page(fetchHandler, { savedToken = null, hash = "", pathname = "/", save
   return {
     nodes, stored, requests, deadlines, timers, writes, historyWrites,
     run: (code) => vm.runInContext(code, context),
-    emit: (state) => listeners.session({ data: JSON.stringify(state) }),
-    disconnect: () => listeners.error(),
+    emit: (state) => listeners.session.forEach((listener) => listener({ data: JSON.stringify(state) })),
+    disconnect: () => listeners.error.forEach((listener) => listener()),
+    campaignUpdated: () => listeners["campaign-updated"].forEach((listener) => listener({ data: "{}" })),
+    reconnect: () => listeners.open.forEach((listener) => listener()),
     authenticate() {
       vm.runInContext(`savePlayerToken("${token}"); playerProfilesLoaded = true`, context);
       nodes["check-access"].disabled = false;
@@ -306,6 +315,7 @@ test("le bouton envoie le profil en JSON avec l'accès joueur et bloque les doub
 
 test("le rechargement retrouve le profil même si le navigateur restaure un menu actif", async () => {
   const p = page(async (url) => {
+    if (url === '/api/campaign') return reply({ campaign: { title: 'Test', description: '' } });
     if (url === '/api/session/me') {
       return reply({ playerId: 'player-one', profileId: 'profile-one', session });
     }
@@ -315,7 +325,10 @@ test("le rechargement retrouve le profil même si le navigateur restaure un menu
   await flush();
   assert.equal(p.nodes['player-profile'].value, 'profile-one');
   assert.equal(p.nodes['player-profile-message'].textContent, 'Tu utilises le profil "Aldric".');
-  assert.equal(p.requests.length, 2);
+  assert.equal(p.requests.length, 3);
+  assert.equal(p.nodes['game-table'].hidden, false);
+  assert.equal(p.nodes['table-profile'].textContent, 'Aldric');
+  assert.equal(p.nodes['campaign-title'].textContent, 'Test');
 });
 
 
@@ -388,6 +401,7 @@ test("une confirmation tardive ne restaure pas le profil après l'arrêt", async
 test("le lien joueur connecte automatiquement et retire le secret de l'URL", async () => {
   const invitation = 'b'.repeat(64);
   const p = page(async (url, options) => {
+    if (url === '/api/campaign') return reply({ campaign: { title: 'Test', description: '' } });
     if (url === '/api/session/join') {
       assert.equal(options.headers.Authorization, `Bearer ${invitation}`);
       return reply({ playerId: 'one', playerToken: token, session }, 201);
@@ -412,8 +426,11 @@ test("une invitation refusée ne provoque pas de nouvelle tentative automatique"
   assert.match(p.nodes['player-message'].textContent, /consommée/);
 });
 
-test("la page privée initialise l'accès MJ sans requête et le retrouve après F5", () => {
-  const noFetch = () => { throw new Error('Aucune requête attendue'); };
+test("la page privée initialise l'accès MJ et le retrouve après F5", () => {
+  const noFetch = async (url) => {
+    assert.equal(url, '/api/campaign');
+    return reply({ campaign: { title: 'Test', description: '' } });
+  };
   const p = page(noFetch, { pathname: '/host', hash: `#host=${token}` });
   assert.equal(p.nodes['host-key'].value, token);
   assert.equal(p.nodes['host-controls'].hidden, false);
@@ -425,4 +442,175 @@ test("la page privée initialise l'accès MJ sans requête et le retrouve après
   const player = page(noFetch, { savedHostKey: token });
   assert.equal(player.nodes['host-key'].value, '');
   assert.equal(player.nodes['host-controls'].hidden, true);
+});
+
+test("le formulaire de campagne charge les valeurs et sauvegarde une seule fois", async () => {
+  const pending = deferred();
+  const original = { title: 'Ancien titre', description: 'Ancienne description' };
+  const updated = { title: 'Nouveau titre', description: '<b>Texte brut</b>' };
+  const p = page(async (url, options) => {
+    assert.equal(url, '/api/campaign');
+    return options.method === 'PUT' ? pending.promise : reply({ campaign: original });
+  }, { pathname: '/host', savedHostKey: token });
+  await flush();
+  assert.equal(p.nodes['campaign-title-input'].value, original.title);
+  assert.equal(p.nodes['campaign-description-input'].value, original.description);
+  assert.equal(p.nodes['save-campaign'].disabled, false);
+  p.nodes['campaign-title-input'].value = `  ${updated.title}  `;
+  p.nodes['campaign-description-input'].value = updated.description;
+  let prevented = false;
+  const submit = () => p.nodes['campaign-form'].listeners.submit({ preventDefault() { prevented = true; } });
+  const operation = submit();
+  await submit();
+  assert.equal(prevented, true);
+  const requests = p.requests.filter(r => r.options.method === 'PUT');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.headers.Authorization, `Bearer ${token}`);
+  assert.equal(requests[0].options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(requests[0].options.body), updated);
+  assert.equal(p.nodes['campaign-title'].textContent, original.title);
+  assert.equal(p.nodes['campaign-title-input'].disabled, true);
+  pending.resolve(reply({ campaign: updated }));
+  await operation;
+  assert.equal(p.nodes['campaign-title'].textContent, updated.title);
+  assert.equal(p.nodes['campaign-description'].textContent, updated.description);
+  assert.equal(p.nodes['campaign-save-message'].textContent, 'Campagne enregistrée.');
+  assert.equal(p.nodes['save-campaign'].disabled, false);
+});
+
+for (const failure of ['refus', 'timeout']) {
+  test(`une sauvegarde en ${failure} conserve la saisie et réactive le formulaire`, async () => {
+    const p = page((url, options) => {
+      if (options.method !== 'PUT') return Promise.resolve(reply({ campaign: { title: 'Ancien', description: '' } }));
+      if (failure === 'refus') return Promise.resolve(reply({ error: 'Accès refusé' }, 401));
+      return new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(options.signal.reason)));
+    }, { pathname: '/host', savedHostKey: token });
+    await flush();
+    p.nodes['campaign-title-input'].value = 'Nouveau';
+    const operation = p.nodes['campaign-form'].listeners.submit({ preventDefault() {} });
+    if (failure === 'timeout') p.deadlines.at(-1).controller.abort(new Error('Timeout'));
+    await operation;
+    assert.equal(p.nodes['campaign-title-input'].value, 'Nouveau');
+    assert.equal(p.nodes['campaign-title'].textContent, 'Ancien');
+    assert.match(p.nodes['campaign-save-message'].textContent, failure === 'refus' ? /Accès refusé/ : /non confirmé/);
+    for (const id of ['save-campaign', 'campaign-title-input', 'campaign-description-input']) {
+      assert.equal(p.nodes[id].disabled, false);
+    }
+    assert.equal(p.requests.filter(r => r.options.method === 'PUT').length, 1);
+  });
+}
+
+test("le signal de campagne actualise le joueur sans message de chargement", async () => {
+  const p = page(async (url, options) => {
+    assert.equal(url, '/api/campaign');
+    assert.equal(options.headers.Authorization, `Bearer ${token}`);
+    return reply({ campaign: { title: 'Nouveau', description: 'Description modifiée' } });
+  });
+  p.authenticate();
+  p.campaignUpdated();
+  await flush();
+  assert.equal(p.nodes['campaign-title'].textContent, 'Nouveau');
+  assert.equal(p.nodes['campaign-description'].textContent, 'Description modifiée');
+  assert.ok(!p.writes.some(([id, text]) => id === 'campaign-message' && /Chargement/.test(text)));
+  p.reconnect();
+  await flush();
+  assert.equal(p.requests.length, 2);
+});
+
+test("une ancienne réponse campagne ne remplace pas la plus récente", async () => {
+  const old = deferred();
+  let calls = 0;
+  const p = page(() => ++calls === 1 ? old.promise : Promise.resolve(reply({ campaign: { title: 'Récent', description: '' } })));
+  p.authenticate();
+  p.campaignUpdated();
+  p.campaignUpdated();
+  await flush();
+  old.resolve(reply({ campaign: { title: 'Ancien', description: '' } }));
+  await flush();
+  assert.equal(p.nodes['campaign-title'].textContent, 'Récent');
+});
+
+test("le signal ne charge rien sans accès et ignore une réponse après révocation", async () => {
+  const pending = deferred();
+  const p = page(() => pending.promise);
+  p.campaignUpdated();
+  p.reconnect();
+  assert.equal(p.requests.length, 0);
+  p.authenticate();
+  p.campaignUpdated();
+  p.emit({ id: null, status: 'stopped' });
+  pending.resolve(reply({ campaign: { title: 'Privé', description: '' } }));
+  await flush();
+  assert.notEqual(p.nodes['campaign-title'].textContent, 'Privé');
+});
+
+test("les signaux de campagne ne remplacent pas le brouillon du MJ", async () => {
+  const p = page(async () => reply({ campaign: { title: 'Initial', description: '' } }), {
+    pathname: '/host', savedHostKey: token,
+  });
+  await flush();
+  p.nodes['campaign-title-input'].value = 'Brouillon';
+  p.campaignUpdated();
+  p.reconnect();
+  await flush();
+  assert.equal(p.nodes['campaign-title-input'].value, 'Brouillon');
+  assert.equal(p.requests.length, 3);
+});
+
+test("la table s'ouvre après confirmation et le retour accueil conserve le profil", async () => {
+  const p = page(async () => reply({ profile: { id: 'one', name: 'Aldric' } }));
+  assert.equal(p.nodes['game-table'].hidden, true);
+  p.nodes['open-table'].listeners.click();
+  assert.equal(p.nodes['game-table'].hidden, true);
+  p.authenticate();
+  p.nodes['player-profile'].value = 'one';
+  await p.nodes['select-profile-form'].listeners.submit({ preventDefault() {} });
+  assert.equal(p.nodes['game-table'].hidden, false);
+  assert.equal(p.nodes['app-layout'].hidden, true);
+  assert.equal(p.nodes['table-profile'].textContent, 'Aldric');
+  p.nodes['back-to-lobby'].listeners.click();
+  assert.equal(p.nodes['game-table'].hidden, true);
+  assert.equal(p.run('currentPlayerProfile.id'), 'one');
+  p.nodes['open-table'].listeners.click();
+  assert.equal(p.nodes['game-table'].hidden, false);
+  p.nodes['table-change-profile'].listeners.click();
+  assert.equal(p.nodes['game-table'].hidden, true);
+  assert.equal(p.run('profileChangeMode'), true);
+  p.nodes['cancel-profile-change'].listeners.click();
+  assert.equal(p.nodes['game-table'].hidden, false);
+  p.emit({ id: null, status: 'stopped' });
+  assert.equal(p.nodes['game-table'].hidden, true);
+  assert.equal(p.nodes['app-layout'].hidden, false);
+});
+
+test("le MJ peut ouvrir le plateau sans profil joueur", async () => {
+  const p = page(async () => reply({ campaign: { title: 'La campagne', description: '' } }), {
+    pathname: '/host', savedHostKey: token,
+  });
+  await flush();
+  assert.equal(p.nodes['open-table'].disabled, false);
+  p.nodes['open-table'].listeners.click();
+  assert.equal(p.nodes['game-table'].hidden, false);
+  assert.equal(p.nodes['table-profile'].textContent, 'MJ (MJ)');
+  assert.equal(p.nodes['table-title'].textContent, 'La campagne');
+  assert.equal(p.nodes['table-change-profile'].hidden, true);
+});
+
+
+test("le MJ sélectionne son profil existant avant d'ouvrir la table", async () => {
+  const p = page(async (url, options) => {
+    if (url === '/api/campaign') return reply({ campaign: { title: 'Test', description: '' } });
+    assert.equal(url, '/api/host/profile');
+    assert.equal(options.headers.Authorization, `Bearer ${token}`);
+    assert.deepEqual(JSON.parse(options.body), { profileId: 'host-profile' });
+    return reply({ profile: { id: 'host-profile', name: 'MJ', role: 'host' } });
+  }, { pathname: '/host', savedHostKey: token, hostProfile: null });
+  await flush();
+  assert.equal(p.nodes['open-table'].disabled, true);
+  assert.equal(p.nodes['game-table'].hidden, true);
+  p.nodes['host-profile-select'].value = 'host-profile';
+  await p.nodes['host-profile-form'].listeners.submit({ preventDefault() {} });
+  assert.equal(p.nodes['game-table'].hidden, false);
+  assert.equal(p.nodes['table-profile'].textContent, 'MJ (MJ)');
+  assert.equal(p.nodes['host-key'].value, token);
 });

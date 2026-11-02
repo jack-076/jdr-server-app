@@ -1,4 +1,4 @@
-function readJson(request) {
+function readJson(request, maxBytes = 4096) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -32,7 +32,7 @@ function readJson(request) {
     function onData(chunk) {
       size += chunk.length;
 
-      if (size > 4096) {
+      if (size > maxBytes) {
         fail("Le contenu de la requête est trop volumineux.", 413);
         return;
       }

@@ -6,7 +6,8 @@ Projet de table de jeu de rôle virtuelle, hébergée sur la machine du meneur,
 Le projet dispose d'un serveur HTTP local et d'une interface web pour gérer et
 rejoindre une partie, créer des profils et les attribuer aux joueurs.
 L'application de bureau Windows (.exe) et Linux est prévue, mais n'est pas encore
-implémentée. Le plateau de jeu et les fiches de personnages restent à développer.
+implémentée. Le plateau permet d'afficher une carte et des pions simples ; les
+images de tokens et les fiches de personnages restent à développer.
 
 ## Organisation
 
@@ -16,6 +17,8 @@ apps/
   web/          Interface web du meneur et des joueurs
 packages/
   shared/       Formats des messages et validations communes
+assets/
+  maps/         Cartes fournies avec le projet
 tests/          Tests d'intégration entre les composants
 ```
 
@@ -60,8 +63,15 @@ Les changements d'état arrivent par événements SSE, sans actualisation pério
 visible. Le bouton d'actualisation a été retiré ; F5 reste disponible.
 Les liens utilisant `127.0.0.1` fonctionnent uniquement sur la même machine.
 
+Le meneur sélectionne son profil sur sa page privée avant d'ouvrir la table. Un
+profil choisi comme meneur est réservé à ce rôle ; un joueur ne peut pas le choisir.
+Pour une nouvelle installation, le meneur peut d'abord créer un profil dans la
+section "Profils joueurs", puis le sélectionner comme profil de meneur. Le rôle
+est attribué seulement avec l'accès privé du meneur. Un profil déjà utilisé par
+un joueur ne peut pas être attribué au meneur avant d'être libéré.
+
 Les fichiers web sont lus au lancement : redémarrer le serveur et recharger les
-pages après une modification HTML ou JavaScript côté navigateur.
+pages après une modification HTML, CSS ou JavaScript côté navigateur.
 
 | Méthode | Route | Action |
 | --- | --- | --- |
@@ -72,9 +82,16 @@ pages après une modification HTML ou JavaScript côté navigateur.
 | POST | `/api/session/join` | Échanger une invitation contre un accès joueur (`201`) |
 | GET | `/api/session/me` | Vérifier un accès joueur et retrouver son profil attribué |
 | POST | `/api/session/profile` | Réserver ou changer de profil (joueur connecté) |
+| GET / POST | `/api/host/profile` | Consulter ou sélectionner le profil du meneur |
 | GET | `/api/events` | Recevoir l'état public de la partie en continu (SSE) |
 | GET | `/api/profiles` | Consulter les profils sauvegardés (meneur ou joueur connecté) |
 | POST | `/api/profiles` | Créer un profil avec un pseudo (meneur uniquement) |
+| GET / PUT | `/api/campaign` | Lire la campagne ou la modifier (modification réservée au meneur) |
+| GET / PUT | `/api/map` | Consulter la carte ou en importer une (import réservé au meneur) |
+| POST | `/api/map/training` | Charger le terrain d'entraînement fourni (meneur uniquement) |
+| GET | `/api/map/image?id=...` | Télécharger la carte actuelle avec un accès valide |
+| GET / POST | `/api/tokens` | Consulter les pions ou en créer un (création réservée au meneur) |
+| PATCH / DELETE | `/api/tokens/:id` | Déplacer un pion autorisé ou le supprimer (suppression réservée au meneur) |
 
 Un démarrage ou un arrêt redondant renvoie `409`. Une route inconnue renvoie `404`.
 L'état reste en mémoire et revient à `stopped` au redémarrage du serveur.
@@ -138,6 +155,54 @@ leurs réservations restent en mémoire : un arrêt de partie, un redémarrage o
 l'expiration d'un accès libère les profils concernés. Les fiches de personnages
 liées aux profils ne sont pas encore disponibles.
 
+## Campagne et carte
+
+Le meneur peut modifier le titre et la description depuis sa page privée. Ces
+informations sont enregistrées dans `data/campaign.json` et transmises en direct
+aux joueurs connectés.
+
+Dans la table, le bouton "Importer une carte" est réservé au meneur. Il accepte
+une image PNG ou JPEG de 10 Mio maximum, jusqu'à 16 384 pixels par côté et
+40 millions de pixels. Le serveur vérifie la structure et les dimensions annoncées ;
+le navigateur vérifie également qu'il peut lire le fichier lorsque cette fonction
+est disponible. L'image est conservée
+dans `data/maps` et reste disponible après un redémarrage.
+
+Le bouton "Terrain d'entraînement" charge la carte de démonstration fournie dans
+`assets/maps/terrain-entrainement.png`. Elle est conçue en vue du dessus, sans
+quadrillage intégré : l'application affiche sa propre grille par-dessus. La carte
+active ne change que lorsque le meneur appuie sur ce bouton.
+
+Une seule carte est active à la fois. Un nouvel import la remplace sur la table
+pour le meneur et les joueurs connectés. Les anciens fichiers restent dans le
+dossier local ; l'interface ne propose pas encore de bibliothèque pour les
+sélectionner. Réimporter le même fichier retrouve les pions de cette carte.
+Plusieurs scènes et les zones cachées ne sont pas encore disponibles.
+
+Sur le plateau, la molette contrôle le zoom et le clic droit maintenu déplace la
+vue. "Recentrer" affiche à nouveau la carte entière. Chaque participant contrôle
+sa propre vue : zoomer ou se déplacer ne change pas la vue des autres.
+
+## Pions de test
+
+Le meneur peut ajouter un pion sur la carte active, lui donner un nom et
+éventuellement l'attribuer à un profil. Un pion sans profil est contrôlé seulement
+par le meneur. Il peut aussi sélectionner un pion et le supprimer.
+
+Pour déplacer un pion, maintenir le clic gauche, viser une case et relâcher : le
+pion fantôme montre la destination uniquement au participant qui le déplace, puis
+disparaît au relâchement. Le pion glisse alors pendant une seconde jusqu'au centre
+de cette case. La position est envoyée et partagée avec les autres participants au
+relâchement. Le serveur vérifie que le joueur
+contrôle le profil auquel le pion est attribué ; le meneur peut déplacer tous les
+pions. Les flèches du clavier déplacent aussi le pion sélectionné. Il peut y avoir
+jusqu'à 100 pions par carte. L'animation respecte le réglage de réduction des
+animations du système.
+
+Les positions sont sauvegardées dans `data/tokens` et restent associées à la carte
+après un redémarrage. Les pions sont pour l'instant représentés par des cercles
+avec une initiale ; l'utilisation d'images personnalisées reste à ajouter.
+
 ## Vérifications
 
 ```sh
@@ -145,10 +210,22 @@ node --check apps/server/index.js
 node --check apps/server/profiles.js
 node --check apps/server/read-json.js
 node --check apps/server/open-host-page.js
+node --check apps/server/map-store.js
+node --check apps/server/read-bytes.js
+node --check apps/server/token-store.js
 node --check apps/web/app.js
+node --check apps/web/board.js
+node --check apps/web/map.js
+node --check apps/web/tokens.js
+node --check packages/shared/grid.js
 node tests/web-state.test.cjs
 node tests/profiles-api.test.cjs
 node tests/open-host-page.test.cjs
+node tests/board.test.cjs
+node tests/map-view.test.cjs
+node tests/token-view.test.cjs
+node tests/grid.test.cjs
+node tests/map-e2e.test.cjs
 ```
 
 Les tests couvrent les connexions automatiques, la restauration après F5, la
@@ -157,6 +234,8 @@ retardées, la révocation et les erreurs réseau. Les tests de l'API utilisent 
 flux HTTP simulés et un dossier temporaire pour vérifier les autorisations, les
 entrées invalides, la persistance et la réservation exclusive des profils.
 Le lanceur Windows/Linux est testé avec des processus simulés.
+Le test HTTP complet utilise un serveur temporaire sur `127.0.0.1` et un dossier
+isolé ; il ne modifie pas les données de la partie.
 
 Ces tests ne démarrent pas de navigateur réel et ne remplacent pas une vérification
 manuelle de l'ouverture de la page et du parcours utilisateur.
@@ -166,11 +245,10 @@ Ce prototype local n'est pas prêt pour une exposition sur Internet.
 
 ## Prochaines étapes
 
-- Accueil de campagne avec titre, description et choix du profil, puis table de jeu.
 - Fiches de personnages créées et gérées par le meneur, liées aux profils joueurs.
 - Interface de bureau Windows et Linux avec Electron ; accès joueurs par navigateur.
-- Import de cartes, tokens et illustrations dans une bibliothèque de médias.
-- Plateau partagé, sauvegarde des campagnes et configuration de l'accès distant.
+- Bibliothèque de médias : plusieurs cartes, images de tokens et illustrations d'objets.
+- Scènes partagées, visibilité, sauvegarde des campagnes et accès distant sécurisé.
 
 ## Licence
 
