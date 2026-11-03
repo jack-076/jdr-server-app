@@ -1,6 +1,8 @@
 const http = require("node:http");
 const { openHostPage } = require("./open-host-page");
-const { randomUUID, randomBytes, timingSafeEqual } = require("node:crypto");
+const { randomUUID, randomBytes, randomInt, timingSafeEqual } = require("node:crypto");
+const { adjustedAbilityModifier } = require("../../packages/pathfinder1/abilities");
+const { parseAttackBonuses, parseDamage } = require("../../packages/pathfinder1/dice");
 const { readFileSync } = require("node:fs");
 const path = require("node:path");
 const { getProfiles, createProfile, assignHostRole } = require("./profiles");
@@ -19,6 +21,7 @@ const tokenScript = readFileSync(path.join(__dirname, "../web/tokens.js"));
 const gridScript = readFileSync(path.join(__dirname, "../../packages/shared/grid.js"));
 const abilityScript = readFileSync(path.join(__dirname, "../../packages/pathfinder1/abilities.js"));
 const characterScript = readFileSync(path.join(__dirname, "../web/character.js"));
+const rollsScript = readFileSync(path.join(__dirname, "../web/rolls.js"));
 const styleSheet = readFileSync(path.join(__dirname, "../web/style.css"));
 const hostKey = randomBytes(32).toString("hex");
 
@@ -39,6 +42,9 @@ let tokenImageUploadInProgress = false;
 const PLAYER_TIMEOUT_MS = 30 * 60 * 1000;
 /** @type {Set<import("node:http").ServerResponse>} */
 const sessionStreams = new Set();
+/** @typedef {{id: string, character: string, skill: string, modifier: number, total: number, die?: number, dice?: number[], sides?: number}} PublicRoll */
+/** @type {PublicRoll[]} */
+const publicRolls = [];
 
 function removeExpiredPlayers() {
   const now = Date.now();
@@ -93,6 +99,12 @@ function broadcastMapUpdate() {
 function broadcastTokenUpdate() {
   for (const response of sessionStreams) {
     if (!response.write("event: tokens-updated\ndata: {}\n\n")) response.destroy();
+  }
+}
+
+function broadcastRollUpdate() {
+  for (const response of sessionStreams) {
+    if (!response.write("event: rolls-updated\ndata: {}\n\n")) response.destroy();
   }
 }
 
@@ -194,9 +206,9 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === "GET" && (url.pathname === "/abilities.js" || url.pathname === "/character.js")) {
+  if (request.method === "GET" && (url.pathname === "/abilities.js" || url.pathname === "/character.js" || url.pathname === "/rolls.js")) {
     response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" });
-    response.end(url.pathname === "/abilities.js" ? abilityScript : characterScript);
+    response.end(url.pathname === "/abilities.js" ? abilityScript : url.pathname === "/character.js" ? characterScript : rollsScript);
     return;
   }
 
@@ -256,6 +268,89 @@ const server = http.createServer(async (request, response) => {
     "application/json; charset=utf-8"
   );
 
+  if (url.pathname === "/api/rolls" && (request.method === "GET" || request.method === "POST")) {
+    response.setHeader("Cache-Control", "no-store");
+    const host = isHost(request);
+    const player = host ? null : getPlayer(request);
+    if (!host && !player) {
+      response.writeHead(401, { Connection: "close" });
+      response.end(JSON.stringify({ error: "Authentification requise." }));
+      return;
+    }
+    if (request.method === "GET") {
+      response.writeHead(200); response.end(JSON.stringify({ rolls: publicRolls })); return;
+    }
+    if (session.status !== "running" || !session.id) {
+      response.writeHead(409, { Connection: "close" });
+      response.end(JSON.stringify({ error: "Démarre la partie avant de lancer un dé." })); return;
+    }
+    if (request.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") {
+      response.writeHead(415, { Connection: "close" });
+      response.end(JSON.stringify({ error: "Le contenu doit être envoyé en JSON." })); return;
+    }
+    const sessionId = session.id;
+    try {
+      const body = await readJson(request);
+      if (session.status !== "running" || session.id !== sessionId || (!host && (getPlayer(request) !== player || !player?.profileId))) {
+        response.writeHead(401); response.end(JSON.stringify({ error: "Accès révoqué ou partie inactive." })); return;
+      }
+      if (!body || typeof body !== "object" || !("profileId" in body) || typeof body.profileId !== "string") {
+        response.writeHead(400); response.end(JSON.stringify({ error: "Profil invalide." })); return;
+      }
+      if (!host && player?.profileId !== body.profileId) {
+        response.writeHead(403); response.end(JSON.stringify({ error: "Tu ne peux utiliser que ton profil." })); return;
+      }
+      const profile = getProfiles().find((item) => item.id === body.profileId);
+      if (!profile) { response.writeHead(404); response.end(JSON.stringify({ error: "Profil introuvable." })); return; }
+      const sheet = getCharacter(profile.id);
+      const kind = "kind" in body ? body.kind : "skill";
+      /** @type {PublicRoll} */
+      let roll;
+      if (kind === "skill" && "skillId" in body && typeof body.skillId === "string") {
+        const skill = sheet.skills.find((item) => item.id === body.skillId);
+        if (!skill) { response.writeHead(404); response.end(JSON.stringify({ error: "Compétence introuvable." })); return; }
+        if (skill.trainedOnly && skill.ranks === 0) {
+          response.writeHead(400); response.end(JSON.stringify({ error: "Cette compétence nécessite au moins un rang." })); return;
+        }
+        const adjustment = sheet.abilityAdjustments[skill.ability];
+        const modifier = adjustedAbilityModifier(sheet.scores[skill.ability], adjustment) + skill.ranks + (skill.classSkill && skill.ranks > 0 ? 3 : 0) + skill.misc + (skill.armorPenalty ? sheet.armorCheckPenalty : 0);
+        const die = randomInt(1, 21);
+        roll = { id: randomUUID(), character: sheet.name || profile.name, skill: skill.name, die, modifier, total: die + modifier };
+      } else if ((kind === "attack" || kind === "damage") && "attackId" in body && typeof body.attackId === "string") {
+        const attack = sheet.attacks.find((item) => item.id === body.attackId);
+        if (!attack) { response.writeHead(404); response.end(JSON.stringify({ error: "Attaque introuvable." })); return; }
+        if (kind === "attack") {
+          const bonuses = parseAttackBonuses(attack.bonus);
+          const index = "bonusIndex" in body ? body.bonusIndex : 0;
+          if (typeof index !== "number" || !Number.isSafeInteger(index) || index < 0 || index >= bonuses.length) {
+            response.writeHead(400); response.end(JSON.stringify({ error: "Bonus d'attaque invalide." })); return;
+          }
+          const modifier = bonuses[index];
+          const die = randomInt(1, 21);
+          roll = { id: randomUUID(), character: sheet.name || profile.name, skill: `Attaque : ${attack.name}`, die, modifier, total: die + modifier };
+        } else {
+          const { count, sides, modifier } = parseDamage(attack.damage);
+          const dice = Array.from({ length: count }, () => randomInt(1, sides + 1));
+          roll = { id: randomUUID(), character: sheet.name || profile.name, skill: `Dégâts : ${attack.name}`, dice, sides, modifier,
+            total: dice.reduce((sum, value) => sum + value, modifier) };
+        }
+      } else {
+        response.writeHead(400); response.end(JSON.stringify({ error: "Type de jet invalide." })); return;
+      }
+      publicRolls.push(roll);
+      if (publicRolls.length > 100) publicRolls.shift();
+      broadcastRollUpdate();
+      response.writeHead(201); response.end(JSON.stringify({ roll }));
+    } catch (caught) {
+      if (response.destroyed) return;
+      const error = describeError(caught);
+      const code = error.statusCode !== undefined && [400, 408, 413].includes(error.statusCode) ? error.statusCode : 500;
+      response.writeHead(code, { Connection: "close" });
+      response.end(JSON.stringify({ error: code === 500 ? "Impossible de lancer le dé." : error.message }));
+    }
+    return;
+  }
+
   const characterRoute = url.pathname.match(/^\/api\/characters\/([0-9a-f-]+)$/);
   if (characterRoute && (request.method === "GET" || request.method === "PUT")) {
     response.setHeader("Cache-Control", "no-store");
@@ -283,7 +378,7 @@ const server = http.createServer(async (request, response) => {
         response.end(JSON.stringify({ error: "Le contenu doit être envoyé en JSON." }));
         return;
       }
-      const body = await readJson(request, 262144);
+      const body = await readJson(request, 524288);
       if (!host && (getPlayer(request) !== player || player?.profileId !== profileId)) {
         response.writeHead(403);
         response.end(JSON.stringify({ error: "Accès à cette fiche révoqué." }));
@@ -848,8 +943,10 @@ const server = http.createServer(async (request, response) => {
     }
 
     session.id = randomUUID();
+    publicRolls.length = 0;
     session.invitationToken = null;
     session.status = "running";
+    broadcastRollUpdate();
     broadcastSession();
 
     response.writeHead(200);
@@ -875,9 +972,11 @@ const server = http.createServer(async (request, response) => {
     }
 
     session.id = null;
+    publicRolls.length = 0;
     session.invitationToken = null;
     players.clear();
     session.status = "stopped";
+    broadcastRollUpdate();
     broadcastSession();
 
     response.writeHead(200);

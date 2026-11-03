@@ -26,7 +26,7 @@ function defaultSkills() {
     id: `base-${index}`, name: String(name), group: /** @type {'adventure' | 'background'} */ (group),
     ability: String(ability), armorPenalty: Boolean(armorPenalty), trainedOnly: Boolean(trainedOnly),
     ranks: 0, classSkill: false, misc: 0,
-  }));
+  })).filter((skill) => skill.id !== "base-26");
 }
 
 module.exports = { defaultSkills };

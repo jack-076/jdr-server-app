@@ -8,5 +8,5 @@
     "target": "ES2022",
     "lib": ["ES2022", "DOM"]
   },
-  "include": ["apps/web/app.js", "apps/web/board.js", "apps/web/map.js", "apps/web/tokens.js", "apps/web/character.js", "apps/web/globals.d.ts", "packages/shared/globals.d.ts"]
+  "include": ["apps/web/app.js", "apps/web/board.js", "apps/web/map.js", "apps/web/tokens.js", "apps/web/character.js", "apps/web/rolls.js", "apps/web/globals.d.ts", "packages/shared/globals.d.ts"]
 }

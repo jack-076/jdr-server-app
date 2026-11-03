@@ -113,6 +113,7 @@ pages après une modification HTML, CSS ou JavaScript côté navigateur.
 | PATCH / DELETE | `/api/tokens/:id` | Déplacer un pion autorisé ou le supprimer (suppression réservée au meneur) |
 | GET / PUT | `/api/tokens/:id/image` | Lire l'image d'un pion ou la remplacer (import réservé au meneur) |
 | GET / PUT | `/api/characters/:profileId` | Consulter ou enregistrer une fiche (meneur ou joueur du profil) |
+| GET / POST | `/api/rolls` | Lire les jets publics ou lancer un jet de compétence autorisé |
 
 Un démarrage ou un arrêt redondant renvoie `409`. Une route inconnue renvoie `404`.
 L'état reste en mémoire et revient à `stopped` au redémarrage du serveur.
@@ -208,8 +209,8 @@ sa propre vue : zoomer ou se déplacer ne change pas la vue des autres.
 
 Sur la table, "Fiche de personnage" ouvre une première fiche Pathfinder 1 liée à
 un profil. Le meneur choisit le profil à consulter ; chaque joueur accède à celui
-qu'il utilise. Le meneur et le joueur concerné peuvent modifier le nom, le niveau,
-les points de vie (actuels, maximum et temporaires), les dégâts non létaux et les
+qu'il utilise. Le meneur et le joueur concerné peuvent modifier l'identité, les
+déplacements, le niveau, les points de vie (actuels, maximum et temporaires), les dégâts non létaux et les
 six caractéristiques. Leurs modificateurs sont calculés automatiquement. Les valeurs
 et leur révision sont conservées dans `data/characters` sur la machine du meneur.
 Un double-clic sur un pion lié à un profil ouvre aussi sa fiche : le meneur peut
@@ -217,27 +218,50 @@ ouvrir celle de chaque profil et le joueur celle de son propre profil. Un pion
 sans profil n'a pas encore de fiche. La fenêtre se déplace en maintenant le clic
 gauche sur sa barre de titre. Elle présente tous les onglets de référence pour
 examen. "Résumé" (nom, niveau et points de vie), "Attributs", "Compétences",
-"Inventaire", "Biographie" et "Notes" sont modifiables. L'onglet "Combat" permet
-de saisir les bonus, défenses et sauvegardes, affichés aussi dans le résumé ; ces
-valeurs ne sont pas encore calculées automatiquement. Ses attaques et les autres
-onglets restent des maquettes clairement signalées. Le portrait affiche l'image
+"Inventaire", "Sorts", "Capacités", "Effets", "Biographie" et "Notes" sont modifiables. L'onglet "Combat" permet
+de saisir les bonus, défenses et sauvegardes, affichés aussi dans le résumé, ainsi
+que des attaques classées par catégorie avec bonus, dégâts et portée. Ces valeurs
+sont manuelles. Un bouton permet de lancer une attaque avec le bonus choisi et un
+autre de lancer les dégâts au format simple `1d8+4` ou `2d6-1`. Les critiques,
+résistances, règles particulières et formules plus complexes ne sont pas automatiques.
+Les autres onglets restent des maquettes clairement signalées. Le portrait affiche l'image
 du premier pion associé au profil sur la carte active lorsqu'elle est disponible.
 
 Les changements sont signalés en direct. Si deux personnes modifient la même fiche,
 une ancienne version est refusée pour éviter d'écraser la nouvelle : recharger la
 fiche permet de voir les valeurs enregistrées, mais remplace le brouillon local.
 Les anciennes fiches conservent leurs données ; leur niveau commence à 1 et leurs
-points de vie à 0 jusqu'à leur modification.
+points de vie à 0 jusqu'à leur modification. Les déplacements acceptent du texte,
+par exemple `9 m` ou `30 ft` ; ils ne modifient pas automatiquement le plateau.
+Les colonnes de dégâts, d'affaiblissement et de malus des caractéristiques sont
+enregistrables. Le modificateur affiché et les jets de compétences tiennent compte
+de ces ajustements : l'affaiblissement réduit le score et chaque paire de points de
+dégâts ou de malus réduit le modificateur de 1. Les points de vie, les états, les
+valeurs d'attaque et de défense ne sont pas modifiés automatiquement.
 Les deux vues de compétences permettent de modifier les rangs, le statut de classe,
-la caractéristique utilisée, le malus d'armure et un modificateur divers. Le total
+la caractéristique utilisée et un modificateur divers. Le malus d'armure se règle
+dans l'onglet "Attributs" et s'applique aux compétences concernées. Le total
 inclut le bonus de classe de +3 si au moins un rang est attribué. Les rangs utilisés
-sont comptés séparément pour Aventure et Background ; le budget et les jets ne sont
-pas encore automatisés. Les compétences personnalisées peuvent être ajoutées ou
+sont comptés séparément pour Aventure et Background ; le budget n'est pas encore
+automatisé. Le bouton "d20" lance un jet public avec les valeurs sauvegardées : il
+faut enregistrer la fiche après toute modification avant de lancer. Les compétences
+qui exigent une formation ne peuvent pas être lancées sans rang. Les 100 derniers
+jets sont visibles par les participants pendant la partie et supprimés à son arrêt
+ou au redémarrage du serveur. Les bonus conditionnels et effets ne sont pas encore
+appliqués automatiquement. Le panneau de jets publics se trouve à droite du plateau.
+Les compétences personnalisées peuvent être ajoutées ou
 supprimées. Dans l'inventaire, on peut saisir la monnaie et des objets regroupés par
 catégorie, avec quantité, poids unitaire en livres, état équipé et description.
-Le poids des objets est additionné sans la monnaie. Les conteneurs ne possèdent pas
-encore de contenu imbriqué ; les effets d'équipement, images d'objets, sorts et
-règles Spheres restent à développer.
+Le poids des objets est additionné sans la monnaie. Dans "Sorts", les points de
+magie, noms, niveaux, coûts, actions et descriptions sont saisis manuellement.
+L'utilisation d'un sort ne dépense pas encore de points et n'applique aucun effet.
+Les capacités peuvent être classées, décrites et dotées d'un compteur d'utilisations
+facultatif ; ces compteurs et les effets sont gérés manuellement.
+L'onglet "Effets" permet de cocher des états et de noter des effets actifs, leur
+durée et leur description. Ces indications n'appliquent pas encore de modificateur
+automatique à la fiche ou au pion.
+Les conteneurs ne possèdent pas encore de contenu imbriqué ; les effets
+d'équipement, images d'objets et règles Spheres restent à développer.
 
 ## Pions de test
 
@@ -299,6 +323,7 @@ node tests/map-view.test.cjs
 node tests/token-view.test.cjs
 node tests/grid.test.cjs
 node tests/pathfinder1-abilities.test.cjs
+node tests/pathfinder1-dice.test.cjs
 node tests/map-e2e.test.cjs
 ```
 

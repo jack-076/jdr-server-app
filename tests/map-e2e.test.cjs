@@ -146,6 +146,10 @@ test('import de carte complet sur un serveur HTTP isolé', async (t) => {
   fs.writeFileSync(path.join(temporary, 'data/characters', `${profile.id}.json`), JSON.stringify({
     name: 'Ancien Aldric', revision: 2,
     scores: { strength: 14, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 },
+    skills: [
+      { id: 'base-26', name: 'Autohypnose', group: 'background', ability: 'wisdom', armorPenalty: false, trainedOnly: true, ranks: 0, classSkill: false, misc: 0 },
+      { id: 'base-27', name: 'Artisanat', group: 'background', ability: 'intelligence', armorPenalty: false, trainedOnly: false, ranks: 3, classSkill: true, misc: 1 },
+    ],
   }));
   const initialSheet = await fetch(base + characterPath, { headers: playerHeaders });
   const character = (await initialSheet.json()).character;
@@ -153,9 +157,18 @@ test('import de carte complet sur un serveur HTTP isolé', async (t) => {
   assert.equal(character.scores.strength, 14);
   assert.equal(character.level, 1);
   assert.equal(character.hitPoints.maximum, 0);
-  assert.ok(character.skills.length > 20);
+  assert.equal(character.identity.ancestry, '');
+  assert.equal(character.movement.land, '');
+  assert.deepEqual(character.abilityAdjustments.intelligence, { damage: 0, drain: 0, penalty: 0 });
+  character.identity.ancestry = 'Humain';
+  character.identity.alignment = 'Neutre';
+  character.movement.land = '9 m';
+  character.movement.fly = '18 m';
+  assert.equal(character.skills.some(skill => skill.name === 'Autohypnose'), false);
+  assert.equal(character.skills[0].name, 'Artisanat');
   character.skills[0].ranks = 3;
   character.skills[0].classSkill = true;
+  character.skills.push({ id: 'trained-only', name: 'Connaissances', group: 'adventure', ability: 'intelligence', armorPenalty: false, trainedOnly: true, ranks: 0, classSkill: false, misc: 0 });
   character.armorCheckPenalty = -2;
   character.biography = { appearance: 'Cheveux bruns', history: 'Originaire de Korvosa' };
   character.notes = 'Tester les sphères';
@@ -165,6 +178,12 @@ test('import de carte complet sur un serveur HTTP isolé', async (t) => {
   assert.equal(character.combat.armorClass, 10);
   character.combat.armorClass = 17;
   character.combat.will = 8;
+  character.attacks.push({ id: 'attack-1', name: 'Épée', category: 'weapon', bonus: '+8/+3', damage: '1d10+2', range: '1,5 m' });
+  character.spells.points = { current: 11, maximum: 15 };
+  character.spells.entries.push({ id: 'spell-1', name: 'Barrière', level: 2, cost: 1, action: 'Standard', description: 'Capacité de test' });
+  character.features.push({ id: 'feature-1', name: 'Mouvement', category: 'class', action: 'Rapide', description: 'Test', uses: { current: 2, maximum: 3 } });
+  character.effects.conditions.push('invisible');
+  character.effects.entries.push({ id: 'effect-1', name: 'Protection', category: 'temporary', duration: '3 tours', active: true, description: 'Test' });
   character.name = 'Aldric';
   character.level = 7;
   character.hitPoints = { current: -3, maximum: 73, temporary: 5, nonlethal: 2 };
@@ -184,6 +203,39 @@ test('import de carte complet sur un serveur HTTP isolé', async (t) => {
       items: [{ ...character.inventory.items[0], quantity: -1 }] } }),
   });
   assert.equal(invalidInventory.status, 400);
+  const invalidAttack = await fetch(base + characterPath, {
+    method: 'PUT', headers: { ...playerHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...character, revision: 3, attacks: [{ ...character.attacks[0], category: 'unknown' }] }),
+  });
+  assert.equal(invalidAttack.status, 400);
+  const invalidSpell = await fetch(base + characterPath, {
+    method: 'PUT', headers: { ...playerHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...character, revision: 3, spells: { ...character.spells,
+      entries: [{ ...character.spells.entries[0], level: 10 }] } }),
+  });
+  assert.equal(invalidSpell.status, 400);
+  const invalidFeature = await fetch(base + characterPath, {
+    method: 'PUT', headers: { ...playerHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...character, revision: 3, features: [{ ...character.features[0], uses: { current: -1, maximum: 3 } }] }),
+  });
+  assert.equal(invalidFeature.status, 400);
+  const invalidEffect = await fetch(base + characterPath, {
+    method: 'PUT', headers: { ...playerHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...character, revision: 3, effects: { ...character.effects,
+      entries: [{ ...character.effects.entries[0], active: 'true' }] } }),
+  });
+  assert.equal(invalidEffect.status, 400);
+  const invalidAdjustment = await fetch(base + characterPath, {
+    method: 'PUT', headers: { ...playerHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...character, revision: 3, abilityAdjustments: { ...character.abilityAdjustments,
+      intelligence: { damage: -1, drain: 0, penalty: 0 } } }),
+  });
+  assert.equal(invalidAdjustment.status, 400);
+  const invalidIdentity = await fetch(base + characterPath, {
+    method: 'PUT', headers: { ...playerHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...character, revision: 3, identity: { ...character.identity, ancestry: 'a'.repeat(81) } }),
+  });
+  assert.equal(invalidIdentity.status, 400);
   const conflict = await fetch(base + characterPath, {
     method: 'PUT', headers: { ...auth(), 'Content-Type': 'application/json' }, body: JSON.stringify(character),
   });
@@ -192,6 +244,60 @@ test('import de carte complet sur un serveur HTTP isolé', async (t) => {
     method: 'PUT', headers: { ...playerHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(character),
   });
   assert.equal(forbiddenSheet.status, 403);
+  assert.equal((await fetch(base + '/api/rolls')).status, 401);
+  const rollBody = { profileId: profile.id, skillId: 'base-27' };
+  const rollRequest = (body, headers = playerHeaders) => fetch(base + '/api/rolls', {
+    method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  assert.equal((await rollRequest({ ...rollBody, profileId: otherProfile.id })).status, 403);
+  assert.equal((await rollRequest({ ...rollBody, skillId: 'trained-only' })).status, 400);
+  const rollEventsController = new AbortController();
+  t.after(() => rollEventsController.abort());
+  const rollEvents = await fetch(base + '/api/events', { signal: rollEventsController.signal });
+  const rollReader = rollEvents.body.getReader();
+  await rollReader.read();
+  const rollNotification = rollReader.read();
+  const rollResponse = await rollRequest({ ...rollBody, modifier: 9999, die: 20 });
+  assert.equal(rollResponse.status, 201);
+  const roll = (await rollResponse.json()).roll;
+  assert.ok(roll.die >= 1 && roll.die <= 20);
+  assert.equal(roll.modifier, 7);
+  assert.equal(roll.total, roll.die + 7);
+  const rollEventText = Buffer.from((await rollNotification).value).toString();
+  assert.match(rollEventText, /event: rolls-updated/);
+  assert.doesNotMatch(rollEventText, /Aldric|Artisanat|Bearer/);
+  const playerRolls = await fetch(base + '/api/rolls', { headers: playerHeaders });
+  assert.equal((await playerRolls.json()).rolls[0].id, roll.id);
+  assert.equal((await rollRequest({ profileId: otherProfile.id, kind: 'attack', attackId: 'attack-1' })).status, 403);
+  assert.equal((await rollRequest({ profileId: profile.id, kind: 'attack', attackId: 'attack-1', bonusIndex: 2 })).status, 400);
+  const attackResponse = await rollRequest({ profileId: profile.id, kind: 'attack', attackId: 'attack-1', bonusIndex: 1, modifier: 999 });
+  assert.equal(attackResponse.status, 201);
+  const attackRoll = (await attackResponse.json()).roll;
+  assert.equal(attackRoll.modifier, 3);
+  assert.equal(attackRoll.total, attackRoll.die + 3);
+  const damageResponse = await rollRequest({ profileId: profile.id, kind: 'damage', attackId: 'attack-1', dice: [999] });
+  assert.equal(damageResponse.status, 201);
+  const damageRoll = (await damageResponse.json()).roll;
+  assert.equal(damageRoll.sides, 10);
+  assert.equal(damageRoll.dice.length, 1);
+  assert.ok(damageRoll.dice[0] >= 1 && damageRoll.dice[0] <= 10);
+  assert.equal(damageRoll.total, damageRoll.dice[0] + 2);
+  const adjustedCharacter = structuredClone(character);
+  adjustedCharacter.revision = 3;
+  adjustedCharacter.abilityAdjustments.intelligence = { damage: 2, drain: 2, penalty: 0 };
+  const adjustedSave = await fetch(base + characterPath, {
+    method: 'PUT', headers: { ...playerHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(adjustedCharacter),
+  });
+  assert.equal(adjustedSave.status, 200);
+  const adjustedRollResponse = await rollRequest(rollBody);
+  assert.equal(adjustedRollResponse.status, 201);
+  const adjustedRoll = (await adjustedRollResponse.json()).roll;
+  assert.equal(adjustedRoll.modifier, 5);
+  assert.equal(adjustedRoll.total, adjustedRoll.die + 5);
+  rollEventsController.abort();
+  await hostPost('/api/session/stop');
+  const afterStopRolls = await fetch(base + '/api/rolls', { headers: auth() });
+  assert.equal((await afterStopRolls.json()).rolls.length, 0);
   await stop();
   ({ base, key } = await start());
   const persisted = await fetch(base + '/api/map', { headers: auth() });
@@ -218,5 +324,20 @@ test('import de carte complet sur un serveur HTTP isolé', async (t) => {
   assert.equal(persistedCharacter.inventory.items[0].weight, 1.5);
   assert.equal(persistedCharacter.combat.armorClass, 17);
   assert.equal(persistedCharacter.combat.will, 8);
+  assert.equal(persistedCharacter.attacks[0].bonus, '+8/+3');
+  assert.equal(persistedCharacter.attacks[0].damage, '1d10+2');
+  assert.equal(persistedCharacter.spells.points.current, 11);
+  assert.equal(persistedCharacter.spells.entries[0].name, 'Barrière');
+  assert.equal(persistedCharacter.spells.entries[0].cost, 1);
+  assert.equal(persistedCharacter.features[0].name, 'Mouvement');
+  assert.deepEqual(persistedCharacter.features[0].uses, { current: 2, maximum: 3 });
+  assert.deepEqual(persistedCharacter.effects.conditions, ['invisible']);
+  assert.equal(persistedCharacter.effects.entries[0].duration, '3 tours');
+  assert.equal(persistedCharacter.effects.entries[0].active, true);
+  assert.equal(persistedCharacter.identity.ancestry, 'Humain');
+  assert.equal(persistedCharacter.identity.alignment, 'Neutre');
+  assert.equal(persistedCharacter.movement.land, '9 m');
+  assert.equal(persistedCharacter.movement.fly, '18 m');
+  assert.deepEqual(persistedCharacter.abilityAdjustments.intelligence, { damage: 2, drain: 2, penalty: 0 });
   assert.equal((await fetch(base + '/api/map', { headers: playerHeaders })).status, 401);
 });

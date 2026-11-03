@@ -82,6 +82,10 @@ function revokePlayerAccess() {
 /** @param {string | null} token */
 function savePlayerToken(token) {
     playerToken = token;
+    if (window.RollView) {
+        if (token === null) window.RollView.clear();
+        else void window.RollView.refresh();
+    }
     if (window.MapView) {
         if (token === null) window.MapView.clear();
         else void window.MapView.refresh();
@@ -598,6 +602,8 @@ function connectSessionEvents() {
   events.addEventListener("map-updated", () => { if (window.TokenView) void window.TokenView.refresh(); });
   events.addEventListener("tokens-updated", () => { if (window.TokenView) void window.TokenView.refresh(); });
   events.addEventListener("character-updated", () => { if (window.CharacterView) window.CharacterView.updated(); });
+  events.addEventListener("rolls-updated", () => { if (window.RollView) void window.RollView.refresh(); });
+  events.addEventListener("open", () => { if (window.RollView) void window.RollView.refresh(); });
   events.addEventListener("open", () => { if (window.CharacterView) window.CharacterView.updated(); });
   // Recharge aussi après une reconnexion pour rattraper les changements manqués.
   events.addEventListener("open", refreshPlayerCampaign);

@@ -12,6 +12,7 @@
   const hpMaximum = /** @type {HTMLInputElement} */ (document.getElementById("character-hp-maximum"));
   const hpTemporary = /** @type {HTMLInputElement} */ (document.getElementById("character-hp-temporary"));
   const hpNonlethal = /** @type {HTMLInputElement} */ (document.getElementById("character-hp-nonlethal"));
+  const armorPenalty = /** @type {HTMLInputElement} */ (document.getElementById("character-armor-penalty"));
   const fields = /** @type {HTMLElement} */ (document.getElementById("character-abilities"));
   const save = /** @type {HTMLButtonElement} */ (document.getElementById("character-save"));
   const reload = /** @type {HTMLButtonElement} */ (document.getElementById("character-reload"));
@@ -24,11 +25,17 @@
   const portrait = /** @type {HTMLElement} */ (document.getElementById("character-portrait"));
   const title = /** @type {HTMLElement} */ (document.getElementById("character-title"));
   const extraTabs = /** @type {NodeListOf<HTMLButtonElement>} */ (document.querySelectorAll("[data-character-tab]"));
+  const identityInputs = /** @type {NodeListOf<HTMLInputElement>} */ (panel.querySelectorAll("[data-character-identity]"));
+  const movementInputs = /** @type {NodeListOf<HTMLInputElement>} */ (panel.querySelectorAll("[data-character-movement]"));
   const isHost = window.location.pathname === "/host";
   const definitions = [["strength", "Force"], ["dexterity", "Dextérité"], ["constitution", "Constitution"],
     ["intelligence", "Intelligence"], ["wisdom", "Sagesse"], ["charisma", "Charisme"]];
   /** @type {Map<string, {input: HTMLInputElement, output: HTMLOutputElement}>} */
   const controls = new Map();
+  /** @type {Map<string, Record<string, HTMLInputElement>>} */
+  const adjustmentControls = new Map();
+  /** @type {Record<string, {damage: number, drain: number, penalty: number}>} */
+  let abilityAdjustments = {};
   let revision = 0;
   let dirty = false;
   let busy = false;
@@ -46,6 +53,18 @@
   let inventoryData = { items: [], currency: { pp: 0, gp: 0, sp: 0, cp: 0 } };
   /** @type {Record<string, number>} */
   let combatData = {};
+  /** @typedef {{id: string, name: string, category: string, bonus: string, damage: string, range: string}} Attack */
+  /** @type {Attack[]} */
+  let attacksData = [];
+  /** @typedef {{id: string, name: string, level: number, cost: number, action: string, description: string}} Spell */
+  /** @type {{points: {current: number, maximum: number}, entries: Spell[]}} */
+  let spellsData = { points: { current: 0, maximum: 0 }, entries: [] };
+  /** @typedef {{id: string, name: string, category: string, action: string, description: string, uses: {current: number, maximum: number} | null}} Feature */
+  /** @type {Feature[]} */
+  let featuresData = [];
+  /** @typedef {{id: string, name: string, category: string, duration: string, active: boolean, description: string}} Effect */
+  /** @type {{conditions: string[], entries: Effect[]}} */
+  let effectsData = { conditions: [], entries: [] };
   let activeTab = "summary";
   /** @type {{id: number, offsetX: number, offsetY: number} | null} */
   let windowDrag = null;
@@ -95,34 +114,48 @@
   function updateSave() {
     save.disabled = busy || !loaded || !permittedId();
     name.disabled = busy || !loaded;
-    for (const input of [level, hpCurrent, hpMaximum, hpTemporary, hpNonlethal]) input.disabled = busy || !loaded;
+    for (const input of [level, hpCurrent, hpMaximum, hpTemporary, hpNonlethal, armorPenalty]) input.disabled = busy || !loaded;
+    for (const input of [...identityInputs, ...movementInputs]) input.disabled = busy || !loaded;
     profile.disabled = busy;
     reload.disabled = busy;
     for (const control of controls.values()) control.input.disabled = busy || !loaded;
+    for (const fields of adjustmentControls.values()) for (const input of Object.values(fields)) input.disabled = busy || !loaded;
     for (const control of other.querySelectorAll("input, select, button, textarea")) {
       if (control instanceof HTMLInputElement || control instanceof HTMLSelectElement || control instanceof HTMLButtonElement || control instanceof HTMLTextAreaElement) control.disabled = busy || !loaded;
     }
+    updateSkillRollButtons();
   }
   function closePanel() { generation++; panel.hidden = true; selectedId = ""; dirty = false; loaded = false; busy = false; form.reset(); updateSave(); }
   for (const [id, labelText] of definitions) {
-    const wrapper = document.createElement("label");
+    const wrapper = document.createElement("div");
     wrapper.className = "character-ability";
     const label = document.createElement("span");
     label.textContent = labelText;
     const input = document.createElement("input");
     input.type = "number"; input.min = "0"; input.max = "1000"; input.step = "1"; input.required = true;
+    input.setAttribute("aria-label", `Valeur ${labelText}`);
     const output = document.createElement("output");
     input.addEventListener("input", () => {
-      const score = input.valueAsNumber;
-      output.textContent = Number.isSafeInteger(score) && score >= 0 ? `Modificateur : ${PathfinderAbilities.abilityModifier(score) >= 0 ? "+" : ""}${PathfinderAbilities.abilityModifier(score)}` : "Valeur invalide";
+      updateAbilityOutput(id);
       refreshSkillTotals();
     });
-    const unavailable = Array.from({ length: 3 }, () => {
-      const cell = document.createElement("span"); cell.className = "sheet-unavailable"; cell.textContent = "—"; cell.title = "À venir"; return cell;
-    });
-    wrapper.append(label, input, output, ...unavailable);
+    /** @type {Record<string, HTMLInputElement>} */
+    const adjustmentInputs = {};
+    for (const [field, labelName] of [["damage", "Dégâts"], ["drain", "Affaiblissement"], ["penalty", "Malus"]]) {
+      const adjustment = document.createElement("input"); adjustment.type = "number"; adjustment.min = "0"; adjustment.max = "1000"; adjustment.step = "1"; adjustment.required = true;
+      adjustment.setAttribute("aria-label", `${labelName} ${labelText}`);
+      adjustment.addEventListener("input", () => {
+        const values = abilityAdjustments[id];
+        if (values && (field === "damage" || field === "drain" || field === "penalty")) values[field] = adjustment.valueAsNumber;
+        updateAbilityOutput(id);
+        refreshSkillTotals();
+      });
+      adjustmentInputs[field] = adjustment;
+    }
+    wrapper.append(label, input, output, ...Object.values(adjustmentInputs));
     fields.append(wrapper);
     controls.set(id, { input, output });
+    adjustmentControls.set(id, adjustmentInputs);
   }
 
   async function load() {
@@ -139,6 +172,14 @@
       const { character } = await response.json();
       if (current !== generation || id !== permittedId() || key !== accessKey()) return;
       name.value = character.name;
+      for (const input of identityInputs) {
+        const field = input.dataset.characterIdentity;
+        if (field) input.value = character.identity[field];
+      }
+      for (const input of movementInputs) {
+        const field = input.dataset.characterMovement;
+        if (field) input.value = character.movement[field];
+      }
       title.textContent = character.name || "Fiche de personnage";
       updatePortrait();
       level.value = String(character.level);
@@ -147,11 +188,20 @@
       hpTemporary.value = String(character.hitPoints.temporary);
       hpNonlethal.value = String(character.hitPoints.nonlethal);
       skillData = character.skills;
+      abilityAdjustments = character.abilityAdjustments;
+      for (const [field, inputs] of adjustmentControls) {
+        for (const [kind, input] of Object.entries(inputs)) input.value = String(abilityAdjustments[field][/** @type {'damage' | 'drain' | 'penalty'} */ (kind)]);
+      }
       armorPenaltyValue = character.armorCheckPenalty;
+      armorPenalty.value = String(armorPenaltyValue);
       biographyData = character.biography;
       notesData = character.notes;
       inventoryData = character.inventory;
       combatData = character.combat;
+      attacksData = character.attacks;
+      spellsData = character.spells;
+      featuresData = character.features;
+      effectsData = character.effects;
       updateCombatSummary();
       revision = character.revision;
       for (const [field, control] of controls) {
@@ -224,30 +274,62 @@
   /** @type {'adventure' | 'background'} */
   let skillGroup = "adventure";
 
+  /** @param {string} ability @returns {number | null} */
+  function adjustedModifier(ability) {
+    const score = controls.get(ability)?.input.valueAsNumber;
+    const adjustment = abilityAdjustments[ability];
+    if (score === undefined || !Number.isSafeInteger(score) || score < 0 || !adjustment ||
+        Object.values(adjustment).some((value) => !Number.isSafeInteger(value) || value < 0)) return null;
+    return PathfinderAbilities.adjustedAbilityModifier(score, adjustment);
+  }
+
+  /** @param {string} ability */
+  function updateAbilityOutput(ability) {
+    const output = controls.get(ability)?.output;
+    if (!output) return;
+    const modifier = adjustedModifier(ability);
+    output.textContent = modifier === null ? "Valeur invalide" : `Modificateur : ${modifier >= 0 ? "+" : ""}${modifier}`;
+  }
+
   function refreshSkillTotals() {
     for (const row of other.querySelectorAll("[data-skill-id]")) {
       const id = /** @type {HTMLElement} */ (row).dataset.skillId;
       const skill = skillData.find((item) => item.id === id);
       const result = row.querySelector("output");
       if (!skill || !result) continue;
-      const score = controls.get(skill.ability)?.input.valueAsNumber;
-      if (score === undefined || !Number.isSafeInteger(score) || score < 0) { result.textContent = "—"; continue; }
-      const total = PathfinderAbilities.abilityModifier(score) + skill.ranks + (skill.classSkill && skill.ranks > 0 ? 3 : 0) + skill.misc + (skill.armorPenalty ? armorPenaltyValue : 0);
+      const modifier = adjustedModifier(skill.ability);
+      if (modifier === null) { result.textContent = "—"; continue; }
+      const total = modifier + skill.ranks + (skill.classSkill && skill.ranks > 0 ? 3 : 0) + skill.misc + (skill.armorPenalty ? armorPenaltyValue : 0);
       result.textContent = `${total >= 0 ? "+" : ""}${total}`;
       result.title = skill.trainedOnly && skill.ranks === 0 ? "Compétence utilisable uniquement si formée" : "Modificateur de compétence";
     }
     const count = other.querySelector("[data-skill-count]");
     if (count) count.textContent = `Rangs Aventure : ${skillData.filter((s) => s.group === "adventure").reduce((n, s) => n + s.ranks, 0)}   |   Rangs Background : ${skillData.filter((s) => s.group === "background").reduce((n, s) => n + s.ranks, 0)}`;
+    updateSkillRollButtons();
+  }
+
+  function updateSkillRollButtons() {
+    for (const button of other.querySelectorAll("button[data-skill-roll]")) {
+      if (!(button instanceof HTMLButtonElement)) continue;
+      const skill = skillData.find((item) => item.id === button.dataset.skillRoll);
+      const untrained = !!skill && skill.trainedOnly && skill.ranks === 0;
+      const invalid = !!skill && adjustedModifier(skill.ability) === null;
+      button.disabled = busy || !loaded || dirty || !permittedId() || !skill || untrained || invalid;
+      button.title = invalid ? "Caractéristique invalide." : untrained ? "Cette compétence nécessite au moins un rang." : dirty ? "Enregistre la fiche avant de lancer." : "Lancer un jet public";
+    }
+    for (const button of other.querySelectorAll("button[data-attack-roll]")) {
+      if (!(button instanceof HTMLButtonElement)) continue;
+      const attack = attacksData.find((item) => item.id === button.dataset.attackRoll);
+      const value = button.dataset.rollKind === "attack" ? attack?.bonus.trim() : attack?.damage.trim();
+      button.disabled = busy || !loaded || dirty || !permittedId() || !attack || !value;
+      button.title = dirty ? "Enregistre la fiche avant de lancer." : !value ? "Renseigne la valeur correspondante." : "Lancer un jet public";
+    }
   }
 
   function renderSkills() {
     other.replaceChildren();
     const info = previewElement("Les totaux incluent la caractéristique, les rangs, le bonus de classe et les modificateurs saisis.", "sheet-preview-notice");
     const counts = previewElement("", "sheet-preview-stats"); counts.dataset.skillCount = "true";
-    const penaltyLabel = document.createElement("label"); penaltyLabel.className = "sheet-armor-penalty"; penaltyLabel.textContent = "Malus d'armure (valeur négative) ";
-    const penalty = document.createElement("input"); penalty.type = "number"; penalty.min = "-1000"; penalty.max = "0"; penalty.step = "1"; penalty.value = String(armorPenaltyValue);
-    penalty.addEventListener("input", () => { armorPenaltyValue = penalty.valueAsNumber; dirty = true; refreshSkillTotals(); });
-    penaltyLabel.append(penalty);
     const switcher = document.createElement("div"); switcher.className = "sheet-skill-tabs";
     for (const [label, group] of /** @type {[string, 'adventure' | 'background'][]} */ ([["Aventure", "adventure"], ["Background", "background"]])) {
       const button = document.createElement("button"); button.type = "button"; button.textContent = label;
@@ -262,6 +344,15 @@
       const row = document.createElement("div"); row.className = "sheet-skill-row"; row.dataset.skillId = skill.id;
       const label = document.createElement("span"); label.textContent = skill.name;
       const total = document.createElement("output"); total.setAttribute("aria-label", `Total ${skill.name}`);
+      const result = document.createElement("div"); result.className = "sheet-skill-result";
+      const roll = document.createElement("button"); roll.type = "button"; roll.textContent = "d20"; roll.dataset.skillRoll = skill.id;
+      roll.setAttribute("aria-label", `Lancer ${skill.name}`);
+      roll.addEventListener("click", () => {
+        const id = permittedId();
+        if (dirty || busy || !id || !window.RollView) return;
+        void window.RollView.rollSkill(id, skill.id);
+      });
+      result.append(roll, total);
       const ranks = document.createElement("input"); ranks.type = "number"; ranks.min = "0"; ranks.max = "1000"; ranks.step = "1"; ranks.value = String(skill.ranks); ranks.required = true; ranks.setAttribute("aria-label", `Rangs ${skill.name}`);
       ranks.addEventListener("input", () => { skill.ranks = ranks.valueAsNumber; dirty = true; refreshSkillTotals(); });
       /** @param {'classSkill' | 'armorPenalty' | 'trainedOnly'} field @param {string} description */
@@ -276,7 +367,7 @@
       misc.addEventListener("input", () => { skill.misc = misc.valueAsNumber; dirty = true; refreshSkillTotals(); });
       const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "×"; remove.title = `Supprimer ${skill.name}`;
       remove.addEventListener("click", () => { skillData = skillData.filter((item) => item.id !== skill.id); dirty = true; renderSkills(); });
-      row.append(label, total, ranks, checkbox("classSkill", "Compétence de classe"), checkbox("armorPenalty", "Malus d'armure"), checkbox("trainedOnly", "Formation requise"), ability, misc, remove);
+      row.append(label, result, ranks, checkbox("classSkill", "Compétence de classe"), checkbox("armorPenalty", "Malus d'armure"), checkbox("trainedOnly", "Formation requise"), ability, misc, remove);
       table.append(row);
     }
     const addRow = document.createElement("div"); addRow.className = "sheet-skill-add";
@@ -289,7 +380,7 @@
       skillData.push({ id: crypto.randomUUID(), name, group: skillGroup, ability: "intelligence", ranks: 0, classSkill: false, armorPenalty: false, trainedOnly: false, misc: 0 });
       dirty = true; renderSkills();
     });
-    addRow.append(skillName, add); other.append(info, counts, penaltyLabel, switcher, table, addRow);
+    addRow.append(skillName, add); other.append(info, counts, switcher, table, addRow);
     refreshSkillTotals(); updateSave();
   }
 
@@ -376,7 +467,7 @@
 
   function renderCombat() {
     other.replaceChildren();
-    other.append(previewElement("Ces valeurs sont saisies manuellement. Les attaques, jets et effets automatiques restent à développer.", "sheet-preview-notice"));
+    other.append(previewElement("Les valeurs sont saisies manuellement. Les jets publics utilisent les valeurs enregistrées ; effets et critiques automatiques restent à développer.", "sheet-preview-notice"));
     for (const [section, entries] of /** @type {Array<[string, string[][]]>} */ (combatSections)) {
       other.append(previewElement(section, "sheet-preview-heading"));
       const row = document.createElement("div"); row.className = "sheet-combat-fields";
@@ -389,15 +480,251 @@
       }
       other.append(row);
     }
-    other.append(previewElement("Attaques et capacités", "sheet-preview-heading"), previewElement("À venir", "sheet-preview-empty"));
+    const categories = [["weapon", "Attaques d'armes"], ["natural", "Attaques naturelles"], ["class", "Capacités de classe"],
+      ["ancestry", "Capacités raciales"], ["item", "Objets"], ["misc", "Divers"]];
+    const addRow = document.createElement("div"); addRow.className = "sheet-inventory-add";
+    const newName = document.createElement("input"); newName.maxLength = 80; newName.placeholder = "Nom de l'attaque"; newName.setAttribute("aria-label", "Nom de la nouvelle attaque");
+    const category = document.createElement("select"); category.setAttribute("aria-label", "Catégorie de la nouvelle attaque");
+    for (const [id, label] of categories) { const option = document.createElement("option"); option.value = id; option.textContent = label; category.append(option); }
+    const add = document.createElement("button"); add.type = "button"; add.textContent = "+ Ajouter";
+    add.addEventListener("click", () => {
+      const name = newName.value.trim();
+      if (!name) { status.textContent = "Saisis le nom de l'attaque."; return; }
+      if (attacksData.length >= 100) { status.textContent = "La limite de 100 attaques est atteinte."; return; }
+      attacksData.push({ id: crypto.randomUUID(), name, category: category.value, bonus: "", damage: "", range: "" });
+      dirty = true; renderCombat();
+    });
+    addRow.append(newName, category, add); other.append(addRow);
+    for (const [categoryId, categoryLabel] of categories) {
+      other.append(previewElement(categoryLabel, "sheet-preview-heading"));
+      const attacks = attacksData.filter((attack) => attack.category === categoryId);
+      if (attacks.length === 0) { other.append(previewElement("Aucune attaque", "sheet-preview-empty")); continue; }
+      const heading = document.createElement("div"); heading.className = "sheet-attack-row sheet-inventory-head";
+      for (const text of ["Nom", "Bonus d'attaque", "Dégâts", "Portée", ""]) heading.append(previewElement(text, ""));
+      other.append(heading);
+      for (const attack of attacks) {
+        const row = document.createElement("div"); row.className = "sheet-attack-row"; row.dataset.attackId = attack.id;
+        const bonusChoice = document.createElement("select"); bonusChoice.setAttribute("aria-label", `Bonus utilisé ${attack.name}`);
+        function updateBonuses() {
+          bonusChoice.replaceChildren();
+          for (const [index, value] of attack.bonus.split("/").entries()) {
+            const option = document.createElement("option"); option.value = String(index); option.textContent = value.trim() || "Bonus manquant"; bonusChoice.append(option);
+          }
+        }
+        bonusChoice.addEventListener("input", (event) => event.stopPropagation());
+        bonusChoice.addEventListener("change", (event) => event.stopPropagation());
+        updateBonuses();
+        /** @param {'name' | 'bonus' | 'damage' | 'range'} key @param {string} label @param {number} max */
+        function field(key, label, max) {
+          const input = document.createElement("input"); input.type = "text"; input.maxLength = max; input.value = attack[key];
+          input.setAttribute("aria-label", `${label} ${attack.name}`); input.placeholder = label;
+          if (key === "name") input.required = true;
+          input.addEventListener("input", () => { attack[key] = input.value; dirty = true; if (key === "bonus") updateBonuses(); }); return input;
+        }
+        const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "×"; remove.title = `Supprimer ${attack.name}`;
+        remove.addEventListener("click", () => { attacksData = attacksData.filter((item) => item.id !== attack.id); dirty = true; renderCombat(); });
+        row.append(field("name", "Nom", 80), field("bonus", "Bonus", 60), field("damage", "Dégâts", 80), field("range", "Portée", 40), remove);
+        const actions = document.createElement("div"); actions.className = "sheet-attack-actions";
+        for (const [kind, label] of /** @type {Array<['attack' | 'damage', string]>} */ ([["attack", "Lancer l'attaque"], ["damage", "Lancer les dégâts"]])) {
+          const button = document.createElement("button"); button.type = "button"; button.textContent = label;
+          button.dataset.attackRoll = attack.id; button.dataset.rollKind = kind;
+          button.addEventListener("click", () => {
+            const id = permittedId();
+            if (dirty || busy || !id || !window.RollView) return;
+            void window.RollView.rollAttack(id, attack.id, kind, Number(bonusChoice.value));
+          });
+          actions.append(button);
+        }
+        actions.prepend(bonusChoice);
+        other.append(row, actions);
+      }
+    }
     updateSave();
   }
+
+  function renderSpells() {
+    other.replaceChildren();
+    other.append(previewElement("La liste et les points de magie sont saisis manuellement. Les effets et les dépenses automatiques restent à développer.", "sheet-preview-notice"));
+    const points = document.createElement("div"); points.className = "sheet-spell-points";
+    for (const [field, labelText] of /** @type {Array<['current' | 'maximum', string]>} */ ([["current", "Points de magie actuels"], ["maximum", "Points de magie maximum"]])) {
+      const label = document.createElement("label"); label.textContent = labelText;
+      const input = document.createElement("input"); input.type = "number"; input.min = "0"; input.max = "1000000"; input.step = "1"; input.required = true;
+      input.value = String(spellsData.points[field]); input.setAttribute("aria-label", labelText);
+      input.addEventListener("input", () => { spellsData.points[field] = input.valueAsNumber; dirty = true; });
+      label.append(input); points.append(label);
+    }
+    other.append(previewElement("Points de magie", "sheet-preview-heading"), points);
+    const addRow = document.createElement("div"); addRow.className = "sheet-inventory-add";
+    const newName = document.createElement("input"); newName.maxLength = 80; newName.placeholder = "Nom du sort ou de la capacité"; newName.setAttribute("aria-label", "Nom du nouveau sort");
+    const level = document.createElement("select"); level.setAttribute("aria-label", "Niveau du nouveau sort");
+    for (let value = 0; value <= 9; value++) { const option = document.createElement("option"); option.value = String(value); option.textContent = value === 0 ? "Tours / niveau 0" : `Niveau ${value}`; level.append(option); }
+    const add = document.createElement("button"); add.type = "button"; add.textContent = "+ Ajouter";
+    add.addEventListener("click", () => {
+      const name = newName.value.trim();
+      if (!name) { status.textContent = "Saisis le nom du sort ou de la capacité."; return; }
+      if (spellsData.entries.length >= 100) { status.textContent = "La limite de 100 sorts est atteinte."; return; }
+      spellsData.entries.push({ id: crypto.randomUUID(), name, level: Number(level.value), cost: 0, action: "", description: "" });
+      dirty = true; renderSpells();
+    });
+    addRow.append(newName, level, add); other.append(addRow);
+    for (let value = 0; value <= 9; value++) {
+      other.append(previewElement(value === 0 ? "Tours de magie / niveau 0" : `Niveau ${value}`, "sheet-preview-heading"));
+      const entries = spellsData.entries.filter((spell) => spell.level === value);
+      if (!entries.length) { other.append(previewElement("Aucun sort ou capacité", "sheet-preview-empty")); continue; }
+      const headings = document.createElement("div"); headings.className = "sheet-spell-row sheet-inventory-head";
+      for (const text of ["Nom", "Points", "Action", "Niveau", ""]) headings.append(previewElement(text, ""));
+      other.append(headings);
+      for (const spell of entries) {
+        const wrapper = document.createElement("div"); wrapper.className = "sheet-spell-entry"; wrapper.dataset.spellId = spell.id;
+        const row = document.createElement("div"); row.className = "sheet-spell-row";
+        const name = document.createElement("input"); name.type = "text"; name.maxLength = 80; name.required = true; name.value = spell.name; name.setAttribute("aria-label", `Nom du sort ${spell.name}`);
+        name.addEventListener("input", () => { spell.name = name.value; dirty = true; });
+        const cost = document.createElement("input"); cost.type = "number"; cost.min = "0"; cost.max = "1000000"; cost.step = "1"; cost.required = true; cost.value = String(spell.cost); cost.setAttribute("aria-label", `Coût en points ${spell.name}`);
+        cost.addEventListener("input", () => { spell.cost = cost.valueAsNumber; dirty = true; });
+        const action = document.createElement("input"); action.type = "text"; action.maxLength = 60; action.value = spell.action; action.setAttribute("aria-label", `Action ${spell.name}`);
+        action.addEventListener("input", () => { spell.action = action.value; dirty = true; });
+        const spellLevel = document.createElement("select"); spellLevel.setAttribute("aria-label", `Niveau ${spell.name}`);
+        for (let number = 0; number <= 9; number++) { const option = document.createElement("option"); option.value = String(number); option.textContent = String(number); spellLevel.append(option); }
+        spellLevel.value = String(spell.level);
+        spellLevel.addEventListener("change", () => { spell.level = Number(spellLevel.value); dirty = true; renderSpells(); });
+        const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "×"; remove.title = `Supprimer ${spell.name}`;
+        remove.addEventListener("click", () => { spellsData.entries = spellsData.entries.filter((item) => item.id !== spell.id); dirty = true; renderSpells(); });
+        row.append(name, cost, action, spellLevel, remove);
+        const description = document.createElement("textarea"); description.placeholder = "Description ou notes (facultatif)"; description.maxLength = 500; description.value = spell.description; description.setAttribute("aria-label", `Description ${spell.name}`);
+        description.addEventListener("input", () => { spell.description = description.value; dirty = true; });
+        const details = document.createElement("details"); const summary = document.createElement("summary"); summary.textContent = "Description"; details.append(summary, description);
+        wrapper.append(row, details); other.append(wrapper);
+      }
+    }
+    updateSave();
+  }
+
+  function renderFeatures() {
+    other.replaceChildren();
+    other.append(previewElement("Les capacités et leurs utilisations sont saisies manuellement ; leurs effets ne sont pas encore appliqués automatiquement.", "sheet-preview-notice"));
+    const categories = [["class", "Capacités de classe"], ["feat", "Dons"], ["trait", "Traits"], ["ancestry", "Traits raciaux"],
+      ["template", "Archétypes"], ["martial", "Disciplines martiales"], ["misc", "Divers"]];
+    const addRow = document.createElement("div"); addRow.className = "sheet-inventory-add";
+    const newName = document.createElement("input"); newName.maxLength = 80; newName.placeholder = "Nom de la capacité"; newName.setAttribute("aria-label", "Nom de la nouvelle capacité");
+    const category = document.createElement("select"); category.setAttribute("aria-label", "Catégorie de la nouvelle capacité");
+    for (const [id, label] of categories) { const option = document.createElement("option"); option.value = id; option.textContent = label; category.append(option); }
+    const add = document.createElement("button"); add.type = "button"; add.textContent = "+ Ajouter";
+    add.addEventListener("click", () => {
+      const name = newName.value.trim();
+      if (!name) { status.textContent = "Saisis le nom de la capacité."; return; }
+      if (featuresData.length >= 100) { status.textContent = "La limite de 100 capacités est atteinte."; return; }
+      featuresData.push({ id: crypto.randomUUID(), name, category: category.value, action: "", description: "", uses: null });
+      dirty = true; renderFeatures();
+    });
+    addRow.append(newName, category, add); other.append(addRow);
+    for (const [categoryId, categoryLabel] of categories) {
+      other.append(previewElement(categoryLabel, "sheet-preview-heading"));
+      const features = featuresData.filter((feature) => feature.category === categoryId);
+      if (!features.length) { other.append(previewElement("Aucune capacité", "sheet-preview-empty")); continue; }
+      for (const feature of features) {
+        const wrapper = document.createElement("div"); wrapper.className = "sheet-feature-entry"; wrapper.dataset.featureId = feature.id;
+        const row = document.createElement("div"); row.className = "sheet-feature-row";
+        const name = document.createElement("input"); name.type = "text"; name.maxLength = 80; name.required = true; name.value = feature.name; name.setAttribute("aria-label", `Nom de la capacité ${feature.name}`);
+        name.addEventListener("input", () => { feature.name = name.value; dirty = true; });
+        const action = document.createElement("input"); action.type = "text"; action.maxLength = 60; action.value = feature.action; action.placeholder = "Action"; action.setAttribute("aria-label", `Action ${feature.name}`);
+        action.addEventListener("input", () => { feature.action = action.value; dirty = true; });
+        const usesLabel = document.createElement("label"); usesLabel.className = "sheet-feature-uses"; usesLabel.textContent = "Utilisations";
+        const usesEnabled = document.createElement("input"); usesEnabled.type = "checkbox"; usesEnabled.checked = feature.uses !== null; usesEnabled.setAttribute("aria-label", `Utilisations limitées ${feature.name}`);
+        usesEnabled.addEventListener("change", () => { feature.uses = usesEnabled.checked ? { current: 0, maximum: 0 } : null; dirty = true; renderFeatures(); });
+        usesLabel.append(usesEnabled);
+        const uses = document.createElement("span"); uses.className = "sheet-feature-count";
+        if (feature.uses) {
+          for (const [field, labelText] of /** @type {Array<['current' | 'maximum', string]>} */ ([["current", "Utilisations restantes"], ["maximum", "Utilisations maximum"]])) {
+            if (field === "maximum") uses.append(document.createTextNode(" / "));
+            const input = document.createElement("input"); input.type = "number"; input.min = "0"; input.max = "1000000"; input.step = "1"; input.required = true;
+            input.value = String(feature.uses[field]); input.setAttribute("aria-label", `${labelText} ${feature.name}`);
+            input.addEventListener("input", () => { if (feature.uses) feature.uses[field] = input.valueAsNumber; dirty = true; }); uses.append(input);
+          }
+        } else uses.textContent = "Sans limite";
+        const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "×"; remove.title = `Supprimer ${feature.name}`;
+        remove.addEventListener("click", () => { featuresData = featuresData.filter((item) => item.id !== feature.id); dirty = true; renderFeatures(); });
+        row.append(name, action, usesLabel, uses, remove);
+        const description = document.createElement("textarea"); description.placeholder = "Description ou notes (facultatif)"; description.maxLength = 500; description.value = feature.description; description.setAttribute("aria-label", `Description ${feature.name}`);
+        description.addEventListener("input", () => { feature.description = description.value; dirty = true; });
+        const details = document.createElement("details"); const summary = document.createElement("summary"); summary.textContent = "Description"; details.append(summary, description);
+        wrapper.append(row, details); other.append(wrapper);
+      }
+    }
+    updateSave();
+  }
+  function renderEffects() {
+    other.replaceChildren();
+    other.append(previewElement("États et effets sont suivis manuellement. Ils ne modifient pas encore les valeurs ni la carte automatiquement.", "sheet-preview-notice"));
+    const conditions = [
+      ["bleeding", "Saignement"], ["blinded", "Aveuglé"], ["burrowing", "Enfouissement"], ["confused", "Confus"],
+      ["cowering", "Recroquevillé"], ["cursed", "Maudit"], ["dazed", "Hébété"], ["dazzled", "Ébloui"], ["deafened", "Sourd"],
+      ["disabled", "Hors de combat"], ["dying", "Mourant"], ["entangled", "Enchevêtré"], ["exhausted", "Épuisé"], ["fatigued", "Fatigué"],
+      ["flat-footed", "Pris au dépourvu"], ["flying", "En vol"], ["frightened", "Effrayé"], ["grappled", "Agrippé"], ["helpless", "Sans défense"],
+      ["hovering", "Vol stationnaire"], ["incorporeal", "Intangible"], ["invisible", "Invisible"], ["nauseated", "Nauséeux"],
+      ["off-balance", "Déséquilibré"], ["panicked", "Paniqué"], ["paralyzed", "Paralysé"], ["petrified", "Pétrifié"], ["pinned", "Immobilisé"],
+      ["prone", "À terre"], ["shaken", "Secoué"], ["sickened", "Malade"], ["sleeping", "Endormi"], ["staggered", "Chancelant"],
+      ["stunned", "Étourdi"], ["swimming", "En nage"], ["unconscious", "Inconscient"],
+    ];
+    const grid = document.createElement("div"); grid.className = "sheet-condition-grid";
+    for (const [id, text] of conditions) {
+      const label = document.createElement("label"); label.className = "sheet-condition";
+      const input = document.createElement("input"); input.type = "checkbox"; input.checked = effectsData.conditions.includes(id); input.setAttribute("aria-label", text);
+      input.addEventListener("change", () => {
+        effectsData.conditions = input.checked ? [...effectsData.conditions, id] : effectsData.conditions.filter((item) => item !== id); dirty = true;
+      });
+      label.append(input, document.createTextNode(text)); grid.append(label);
+    }
+    other.append(previewElement("États et conditions", "sheet-preview-heading"), grid);
+    const categories = [["temporary", "Effets temporaires"], ["spell", "Sorts"], ["item", "Objets"], ["feature", "Capacités"],
+      ["permanent", "Effets permanents"], ["misc", "Divers"], ["stance", "Postures"]];
+    const addRow = document.createElement("div"); addRow.className = "sheet-inventory-add";
+    const newName = document.createElement("input"); newName.maxLength = 80; newName.placeholder = "Nom de l'effet"; newName.setAttribute("aria-label", "Nom du nouvel effet");
+    const category = document.createElement("select"); category.setAttribute("aria-label", "Catégorie du nouvel effet");
+    for (const [id, label] of categories) { const option = document.createElement("option"); option.value = id; option.textContent = label; category.append(option); }
+    const add = document.createElement("button"); add.type = "button"; add.textContent = "+ Ajouter";
+    add.addEventListener("click", () => {
+      const name = newName.value.trim();
+      if (!name) { status.textContent = "Saisis le nom de l'effet."; return; }
+      if (effectsData.entries.length >= 100) { status.textContent = "La limite de 100 effets est atteinte."; return; }
+      effectsData.entries.push({ id: crypto.randomUUID(), name, category: category.value, duration: "", active: false, description: "" });
+      dirty = true; renderEffects();
+    });
+    addRow.append(newName, category, add); other.append(addRow);
+    for (const [categoryId, categoryLabel] of categories) {
+      other.append(previewElement(categoryLabel, "sheet-preview-heading"));
+      const effects = effectsData.entries.filter((effect) => effect.category === categoryId);
+      if (!effects.length) { other.append(previewElement("Aucun effet", "sheet-preview-empty")); continue; }
+      for (const effect of effects) {
+        const wrapper = document.createElement("div"); wrapper.className = "sheet-effect-entry"; wrapper.dataset.effectId = effect.id;
+        const row = document.createElement("div"); row.className = "sheet-effect-row";
+        const name = document.createElement("input"); name.type = "text"; name.maxLength = 80; name.required = true; name.value = effect.name; name.setAttribute("aria-label", `Nom de l'effet ${effect.name}`);
+        name.addEventListener("input", () => { effect.name = name.value; dirty = true; });
+        const duration = document.createElement("input"); duration.type = "text"; duration.maxLength = 60; duration.value = effect.duration; duration.placeholder = "Durée"; duration.setAttribute("aria-label", `Durée ${effect.name}`);
+        duration.addEventListener("input", () => { effect.duration = duration.value; dirty = true; });
+        const activeLabel = document.createElement("label"); activeLabel.className = "sheet-item-equipped"; activeLabel.textContent = "Actif";
+        const active = document.createElement("input"); active.type = "checkbox"; active.checked = effect.active; active.setAttribute("aria-label", `Effet actif ${effect.name}`);
+        active.addEventListener("change", () => { effect.active = active.checked; dirty = true; }); activeLabel.append(active);
+        const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "×"; remove.title = `Supprimer ${effect.name}`;
+        remove.addEventListener("click", () => { effectsData.entries = effectsData.entries.filter((item) => item.id !== effect.id); dirty = true; renderEffects(); });
+        row.append(name, duration, activeLabel, remove);
+        const description = document.createElement("textarea"); description.placeholder = "Description ou notes (facultatif)"; description.maxLength = 500; description.value = effect.description; description.setAttribute("aria-label", `Description ${effect.name}`);
+        description.addEventListener("input", () => { effect.description = description.value; dirty = true; });
+        const details = document.createElement("details"); const summary = document.createElement("summary"); summary.textContent = "Description"; details.append(summary, description);
+        wrapper.append(row, details); other.append(wrapper);
+      }
+    }
+    updateSave();
+  }
+
   /** @param {string} tab */
   function renderPreview(tab) {
     other.replaceChildren();
     if (tab === "skills") { renderSkills(); return; }
     if (tab === "inventory") { renderInventory(); return; }
     if (tab === "combat") { renderCombat(); return; }
+    if (tab === "spells") { renderSpells(); return; }
+    if (tab === "features") { renderFeatures(); return; }
+    if (tab === "buffs") { renderEffects(); return; }
     if (tab === "biography" || tab === "notes") {
       /** @type {Array<{label: string, key: 'appearance' | 'history' | 'notes', max: number}>} */
       const sections = tab === "biography" ? [{ label: "Apparence", key: "appearance", max: 2000 }, { label: "Histoire du personnage", key: "history", max: 4000 }] : [{ label: "Notes du personnage", key: "notes", max: 4000 }];
@@ -439,18 +766,22 @@
     selectedId = profile.value; void load();
   });
   reload.addEventListener("click", () => { void load(); });
-  form.addEventListener("input", () => { dirty = true; });
+  form.addEventListener("input", () => { dirty = true; updateSkillRollButtons(); });
+  form.addEventListener("change", () => { dirty = true; updateSkillRollButtons(); });
+  armorPenalty.addEventListener("input", () => { armorPenaltyValue = armorPenalty.valueAsNumber; refreshSkillTotals(); });
   name.addEventListener("input", () => { title.textContent = name.value.trim() || "Fiche de personnage"; });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const id = permittedId(); const key = accessKey();
     if (!id || !key || busy) return;
     const scores = Object.fromEntries([...controls].map(([field, control]) => [field, control.input.valueAsNumber]));
+    const identity = Object.fromEntries([...identityInputs].map((input) => [input.dataset.characterIdentity, input.value]));
+    const movement = Object.fromEntries([...movementInputs].map((input) => [input.dataset.characterMovement, input.value]));
     const current = ++generation; busy = true; updateSave();
     try {
       const response = await fetch(`/api/characters/${encodeURIComponent(id)}`, {
         method: "PUT", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.value, scores, revision, level: level.valueAsNumber, skills: skillData, armorCheckPenalty: armorPenaltyValue, inventory: inventoryData, combat: combatData,
+        body: JSON.stringify({ name: name.value, scores, abilityAdjustments, revision, level: level.valueAsNumber, skills: skillData, armorCheckPenalty: armorPenaltyValue, inventory: inventoryData, combat: combatData, attacks: attacksData, spells: spellsData, features: featuresData, effects: effectsData, identity, movement,
           biography: biographyData, notes: notesData,
           hitPoints: { current: hpCurrent.valueAsNumber, maximum: hpMaximum.valueAsNumber,
             temporary: hpTemporary.valueAsNumber, nonlethal: hpNonlethal.valueAsNumber } }), signal: AbortSignal.timeout(5000),

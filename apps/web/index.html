@@ -12,6 +12,7 @@
         <script src="/tokens.js" defer></script>
         <script src="/abilities.js" defer></script>
         <script src="/character.js" defer></script>
+        <script src="/rolls.js" defer></script>
     </head>
     <body>
         <main id="app-layout" class="app-layout">
@@ -180,11 +181,15 @@
                                 <input id="character-name" type="text" maxlength="80" placeholder="Nom du personnage">
                                 <label class="character-level">Niveau <input id="character-level" type="number" min="1" max="1000" step="1" required></label>
                             </div>
-                            <div class="character-identity-details" aria-label="Informations à venir">
-                                <span>Genre <small>À venir</small></span><span>Divinité <small>À venir</small></span><span>Âge <small>À venir</small></span>
-                                <span>Taille <small>À venir</small></span><span>Poids <small>À venir</small></span><span>Alignement <small>À venir</small></span>
+                            <div class="character-identity-details" aria-label="Informations du personnage">
+                                <label>Genre<input type="text" maxlength="80" data-character-identity="gender"></label>
+                                <label>Divinité<input type="text" maxlength="80" data-character-identity="deity"></label>
+                                <label>Âge<input type="text" maxlength="80" data-character-identity="age"></label>
+                                <label>Taille<input type="text" maxlength="80" data-character-identity="height"></label>
+                                <label>Poids<input type="text" maxlength="80" data-character-identity="weight"></label>
+                                <label>Alignement<input type="text" maxlength="80" data-character-identity="alignment"></label>
                             </div>
-                            <div class="character-identity-extra"><span>Ascendance / espèce <small>À venir</small></span><span>Repos <small>À venir</small></span></div>
+                            <div class="character-identity-extra"><label>Ascendance / espèce<input type="text" maxlength="80" data-character-identity="ancestry"></label><span>Repos <small>À venir</small></span></div>
                         </div>
                     </div>
                     <div class="character-summary-grid">
@@ -198,7 +203,14 @@
                     </div>
                     </div>
                     <div><h3 class="character-section-title">Déplacements</h3>
-                        <div class="sheet-cells"><span>Marche<br>—</span><span>Escalade<br>—</span><span>Nage<br>—</span><span>Vol<br>—</span></div>
+                        <div class="sheet-movement">
+                            <label>Marche<input type="text" maxlength="40" data-character-movement="land"></label>
+                            <label>Escalade<input type="text" maxlength="40" data-character-movement="climb"></label>
+                            <label>Nage<input type="text" maxlength="40" data-character-movement="swim"></label>
+                            <label>Creusement<input type="text" maxlength="40" data-character-movement="burrow"></label>
+                            <label>Vol<input type="text" maxlength="40" data-character-movement="fly"></label>
+                            <label>Manœuvrabilité<input type="text" maxlength="40" data-character-movement="maneuverability"></label>
+                        </div>
                     </div>
                     </div>
                     <h3 class="sheet-subheading">Défenses</h3>
@@ -213,7 +225,8 @@
                     <div id="character-attributes" hidden>
                     <div class="character-column-headings" aria-hidden="true"><span>Caractéristique</span><span>Total</span><span>Modificateur</span><span>Dégâts</span><span>Affaiblissement</span><span>Malus</span></div>
                     <div id="character-abilities" class="character-abilities"></div>
-                    <div class="sheet-cells"><span>Malus d'armure<br>—</span><span>Dextérité max.<br>—</span></div>
+                    <p class="sheet-adjustment-notice">Le score saisi est avant affaiblissement. Le modificateur et les compétences tiennent compte des ajustements. Les PV, défenses et états ne sont pas encore modifiés automatiquement.</p>
+                    <div class="sheet-cells"><label class="sheet-armor-cell" for="character-armor-penalty">Malus d'armure<input id="character-armor-penalty" type="number" min="-1000" max="0" step="1" required></label><span>Dextérité max.<br>—</span></div>
                     <div class="sheet-cells"><span>Allonge<br>—</span><span>Taille<br>—</span><span>Stature<br>—</span><span>Âge<br>—</span></div>
                     <div class="sheet-detail-list"><div>Sens <span>À venir</span></div><div>Auras <span>À venir</span></div><div>Régénération <span>À venir</span></div><div>Guérison accélérée <span>À venir</span></div><div>Résistances <span>À venir</span></div><div>Réduction des dégâts <span>À venir</span></div><div>Immunités <span>À venir</span></div><div>Langues <span>À venir</span></div><div>Maîtrises d'armes <span>À venir</span></div><div>Maîtrises d'armures <span>À venir</span></div></div>
                     </div>
@@ -244,6 +257,7 @@
                 </form>
             </section>
             <p id="token-status" class="token-status" role="status"></p>
+            <div class="table-play-area">
             <div id="board-viewport" class="empty-board" tabindex="0" role="region" aria-label="Plateau de jeu" aria-describedby="board-help">
                 <img id="board-map" class="board-map" alt="Carte de la partie" draggable="false" hidden>
                 <div id="board-grid" class="board-grid" aria-hidden="true"></div>
@@ -253,6 +267,12 @@
                     <h2>Aucune scène chargée</h2>
                     <p>Les cartes et les tokens seront ajoutés à une prochaine étape.</p>
                 </div>
+            </div>
+            <aside id="roll-log" class="roll-log" aria-labelledby="roll-log-title">
+                <h2 id="roll-log-title">◆ Jets publics</h2>
+                <p id="roll-log-status" role="status"></p>
+                <ol id="roll-log-list" aria-live="polite"></ol>
+            </aside>
             </div>
             <footer class="table-footer">
                 <p id="table-profile"></p>
