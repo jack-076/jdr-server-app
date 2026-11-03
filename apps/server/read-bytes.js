@@ -1,5 +1,13 @@
-function readBytes(request, maxBytes, timeoutMs = 30000) {
+/**
+ * @param {import("node:http").IncomingMessage} request
+ * @param {number} maxBytes
+ * @param {number} [timeoutMs]
+ * @param {string} [tooLargeMessage]
+ * @returns {Promise<Buffer>}
+ */
+function readBytes(request, maxBytes, timeoutMs = 30000, tooLargeMessage = "La carte dépasse 10 Mio.") {
   return new Promise((resolve, reject) => {
+    /** @type {Buffer[]} */
     const chunks = [];
     let size = 0;
     let finished = false;
@@ -11,18 +19,19 @@ function readBytes(request, maxBytes, timeoutMs = 30000) {
       request.removeListener("end", onEnd);
       request.removeListener("aborted", onAborted);
     }
+    /** @param {string} message @param {number} statusCode */
     function fail(message, statusCode) {
       if (finished) return;
       finished = true;
       cleanup();
       request.resume();
-      const error = new Error(message);
-      error.statusCode = statusCode;
+      const error = Object.assign(new Error(message), { statusCode });
       reject(error);
     }
+    /** @param {Buffer} chunk */
     function onData(chunk) {
       size += chunk.length;
-      if (size > maxBytes) return fail("La carte dépasse 10 Mio.", 413);
+      if (size > maxBytes) return fail(tooLargeMessage, 413);
       chunks.push(chunk);
     }
     function onEnd() {

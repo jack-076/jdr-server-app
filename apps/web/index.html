@@ -10,6 +10,8 @@
         <script src="/board.js" defer></script>
         <script src="/map.js" defer></script>
         <script src="/tokens.js" defer></script>
+        <script src="/abilities.js" defer></script>
+        <script src="/character.js" defer></script>
     </head>
     <body>
         <main id="app-layout" class="app-layout">
@@ -144,9 +146,83 @@
                     <button id="map-training" class="secondary" type="button" hidden>Terrain d'entraînement</button>
                     <input id="map-file" type="file" accept="image/png,image/jpeg" hidden>
                     <button id="table-change-profile" class="secondary" type="button" hidden>Changer de profil</button>
+                    <button id="character-open" class="secondary" type="button">Fiche de personnage</button>
                     <button id="back-to-lobby" class="secondary" type="button">Retour à l'accueil</button>
                 </nav>
             </header>
+            <section id="character-panel" class="character-panel" role="dialog" aria-labelledby="character-title" hidden>
+                <div id="character-header" class="character-header">
+                    <h2 id="character-title">Fiche de personnage</h2>
+                    <button id="character-close" class="secondary" type="button">✕ Fermer</button>
+                </div>
+                <label id="character-profile-label" for="character-profile" hidden>Profil</label>
+                <select id="character-profile" hidden></select>
+                <form id="character-form">
+                    <nav class="character-tabs" aria-label="Sections de la fiche">
+                        <button id="character-tab-summary" type="button" aria-pressed="true">Résumé</button>
+                        <button id="character-tab-attributes" type="button" aria-pressed="false">Attributs</button>
+                        <button data-character-tab="combat" type="button" aria-pressed="false">Combat</button>
+                        <button data-character-tab="inventory" type="button" aria-pressed="false">Inventaire</button>
+                        <button data-character-tab="features" type="button" aria-pressed="false">Capacités</button>
+                        <button data-character-tab="skills" type="button" aria-pressed="false">Compétences</button>
+                        <button data-character-tab="spells" type="button" aria-pressed="false">Sorts</button>
+                        <button data-character-tab="buffs" type="button" aria-pressed="false">Effets</button>
+                        <button data-character-tab="biography" type="button" aria-pressed="false">Biographie</button>
+                        <button data-character-tab="notes" type="button" aria-pressed="false">Notes</button>
+                        <button data-character-tab="settings" type="button" aria-pressed="false">Paramètres</button>
+                    </nav>
+                    <div id="character-summary">
+                    <div class="character-identity">
+                        <div id="character-portrait" class="character-portrait" aria-label="Portrait du pion associé">♟</div>
+                        <div class="character-identity-main">
+                            <div class="character-name-line">
+                                <label for="character-name" class="sr-only">Nom du personnage</label>
+                                <input id="character-name" type="text" maxlength="80" placeholder="Nom du personnage">
+                                <label class="character-level">Niveau <input id="character-level" type="number" min="1" max="1000" step="1" required></label>
+                            </div>
+                            <div class="character-identity-details" aria-label="Informations à venir">
+                                <span>Genre <small>À venir</small></span><span>Divinité <small>À venir</small></span><span>Âge <small>À venir</small></span>
+                                <span>Taille <small>À venir</small></span><span>Poids <small>À venir</small></span><span>Alignement <small>À venir</small></span>
+                            </div>
+                            <div class="character-identity-extra"><span>Ascendance / espèce <small>À venir</small></span><span>Repos <small>À venir</small></span></div>
+                        </div>
+                    </div>
+                    <div class="character-summary-grid">
+                    <div>
+                    <h3 class="character-section-title">Points de vie</h3>
+                    <div class="character-abilities character-health">
+                        <label class="character-ability">PV actuels <input id="character-hp-current" type="number" min="-1000000" max="1000000" step="1" required></label>
+                        <label class="character-ability">PV maximum <input id="character-hp-maximum" type="number" min="0" max="1000000" step="1" required></label>
+                        <label class="character-ability">PV temporaires <input id="character-hp-temporary" type="number" min="0" max="1000000" step="1" required></label>
+                        <label class="character-ability">Dégâts non létaux <input id="character-hp-nonlethal" type="number" min="0" max="1000000" step="1" required></label>
+                    </div>
+                    </div>
+                    <div><h3 class="character-section-title">Déplacements</h3>
+                        <div class="sheet-cells"><span>Marche<br>—</span><span>Escalade<br>—</span><span>Nage<br>—</span><span>Vol<br>—</span></div>
+                    </div>
+                    </div>
+                    <h3 class="sheet-subheading">Défenses</h3>
+                    <div class="sheet-cells"><span>CA<br><output data-combat-display="armorClass">—</output></span><span>Contact<br><output data-combat-display="touch">—</output></span><span>Pris au dépourvu<br><output data-combat-display="flatFooted">—</output></span><span>DMD<br><output data-combat-display="maneuverDefense">—</output></span><span>DMD dépourvu<br><output data-combat-display="flatFootedManeuverDefense">—</output></span></div>
+                    <div class="sheet-cells"><span>Vigueur<br><output data-combat-display="fortitude">—</output></span><span>Réflexes<br><output data-combat-display="reflex">—</output></span><span>Volonté<br><output data-combat-display="will">—</output></span><span>Résistance aux sorts<br><output data-combat-display="spellResistance">—</output></span></div>
+                    <div class="sheet-cells"><span>Bonus de base à l'attaque<br><output data-combat-display="baseAttack">—</output></span><span>BMO<br><output data-combat-display="maneuverBonus">—</output></span><span>Initiative<br><output data-combat-display="initiative">—</output></span></div>
+                    <h3 class="sheet-subheading">Actions rapides <small>À venir</small></h3>
+                    <div class="sheet-empty-line">Les actions rapides apparaîtront ici.</div>
+                    <h3 class="sheet-subheading">Classes <small>À venir</small></h3>
+                    <div class="sheet-column-bar"><span>Classe</span><span>Type</span><span>Niveau</span></div>
+                    </div>
+                    <div id="character-attributes" hidden>
+                    <div class="character-column-headings" aria-hidden="true"><span>Caractéristique</span><span>Total</span><span>Modificateur</span><span>Dégâts</span><span>Affaiblissement</span><span>Malus</span></div>
+                    <div id="character-abilities" class="character-abilities"></div>
+                    <div class="sheet-cells"><span>Malus d'armure<br>—</span><span>Dextérité max.<br>—</span></div>
+                    <div class="sheet-cells"><span>Allonge<br>—</span><span>Taille<br>—</span><span>Stature<br>—</span><span>Âge<br>—</span></div>
+                    <div class="sheet-detail-list"><div>Sens <span>À venir</span></div><div>Auras <span>À venir</span></div><div>Régénération <span>À venir</span></div><div>Guérison accélérée <span>À venir</span></div><div>Résistances <span>À venir</span></div><div>Réduction des dégâts <span>À venir</span></div><div>Immunités <span>À venir</span></div><div>Langues <span>À venir</span></div><div>Maîtrises d'armes <span>À venir</span></div><div>Maîtrises d'armures <span>À venir</span></div></div>
+                    </div>
+                    <div id="character-other" hidden></div>
+                    <div class="character-actions"><button id="character-save" type="submit" disabled>Enregistrer</button>
+                    <button id="character-reload" class="secondary" type="button">Recharger la fiche</button></div>
+                </form>
+                <p id="character-status" role="status"></p>
+            </section>
             <div class="board-navigation" aria-label="Vue du plateau">
                 <button id="board-reset" class="secondary" type="button">Recentrer</button>
                 <p id="board-help">Molette : zoom. Clic droit : déplacer la vue. Pion : maintenir le clic gauche puis relâcher sur une case. Clavier : flèches, +, -, 0.</p>
@@ -156,6 +232,9 @@
                 <form id="token-form">
                     <label for="token-name">Nom du pion</label>
                     <input id="token-name" type="text" maxlength="40" required disabled>
+                    <label for="token-image">Image du pion</label>
+                    <input id="token-image" type="file" accept="image/png,image/jpeg" disabled>
+                    <button id="token-image-apply" type="button" disabled>Appliquer l'image au pion sélectionné</button>
                     <label for="token-owner">Contrôlé par</label>
                     <select id="token-owner" disabled>
                         <option value="">Meneur uniquement</option>

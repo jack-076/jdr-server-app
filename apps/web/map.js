@@ -1,20 +1,23 @@
 (() => {
-    const chooseButton = document.getElementById("map-choose");
-    const trainingButton = document.getElementById("map-training");
-    const fileInput = document.getElementById("map-file");
-    const status = document.getElementById("map-status");
-    const image = document.getElementById("board-map");
-    const emptyMessage = document.getElementById("board-empty-message");
-    const viewport = document.getElementById("board-viewport");
+    const chooseButton = /** @type {HTMLButtonElement} */ (document.getElementById("map-choose"));
+    const trainingButton = /** @type {HTMLButtonElement} */ (document.getElementById("map-training"));
+    const fileInput = /** @type {HTMLInputElement} */ (document.getElementById("map-file"));
+    const status = /** @type {HTMLElement} */ (document.getElementById("map-status"));
+    const image = /** @type {HTMLImageElement} */ (document.getElementById("board-map"));
+    const emptyMessage = /** @type {HTMLElement} */ (document.getElementById("board-empty-message"));
+    const viewport = /** @type {HTMLElement} */ (document.getElementById("board-viewport"));
     const isHostPage = window.location.pathname === "/host";
     let version = 0;
+    /** @type {string | null} */
     let currentId = null;
+    /** @type {string | null} */
     let objectUrl = null;
     let uploading = false;
 
     chooseButton.hidden = !isHostPage;
     trainingButton.hidden = !isHostPage;
 
+    /** @param {boolean} busy */
     function setBusy(busy) {
         uploading = busy;
         chooseButton.disabled = busy;
@@ -41,8 +44,10 @@
         if (!key) return;
         const requestVersion = ++version;
         const isCurrent = () => requestVersion === version && key === accessKey();
+        /** @type {string | null} */
         let candidateUrl = null;
         try {
+            /** @type {RequestInit} */
             const options = {
                 headers: { Authorization: `Bearer ${key}` },
                 cache: "no-store",
@@ -75,9 +80,9 @@
             candidateUrl = URL.createObjectURL(blob);
             const decoded = new Image();
             await new Promise((resolve, reject) => {
-                decoded.onload = resolve;
+                decoded.onload = () => resolve(undefined);
                 decoded.onerror = () => reject(new Error("Image illisible"));
-                decoded.src = candidateUrl;
+                decoded.src = candidateUrl || "";
             });
             if (!isCurrent()) return;
             const previousUrl = objectUrl;
@@ -107,7 +112,7 @@
 
     chooseButton.addEventListener("click", () => { if (!uploading) fileInput.click(); });
     fileInput.addEventListener("change", async () => {
-        const file = fileInput.files[0];
+        const file = fileInput.files?.[0];
         if (!file || uploading) return;
         if (!["image/png", "image/jpeg"].includes(file.type)) {
             status.textContent = "Choisis une image PNG ou JPEG.";

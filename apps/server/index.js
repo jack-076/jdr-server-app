@@ -8,26 +8,36 @@ const { readJson } = require("./read-json");
 const { getCampaign, updateCampaign } = require("./campaign");
 const { MAX_MAP_BYTES, getCurrentMap, saveMap, readCurrentMap } = require("./map-store");
 const { readBytes } = require("./read-bytes");
-const { listTokens, listTokensOnGrid, createToken, moveToken, removeToken } = require("./token-store");
+const { getCharacter, saveCharacter } = require("./character-store");
+const { listTokens, listTokensOnGrid, createToken, moveToken, removeToken, setTokenImage } = require("./token-store");
+const { MAX_TOKEN_IMAGE_BYTES, saveTokenImage, readTokenImage, deleteTokenImage } = require("./token-images");
 const homePage = readFileSync(path.join(__dirname, "../web/index.html"));
 const browserScript = readFileSync(path.join(__dirname, "../web/app.js"));
 const boardScript = readFileSync(path.join(__dirname, "../web/board.js"));
 const mapScript = readFileSync(path.join(__dirname, "../web/map.js"));
 const tokenScript = readFileSync(path.join(__dirname, "../web/tokens.js"));
 const gridScript = readFileSync(path.join(__dirname, "../../packages/shared/grid.js"));
+const abilityScript = readFileSync(path.join(__dirname, "../../packages/pathfinder1/abilities.js"));
+const characterScript = readFileSync(path.join(__dirname, "../web/character.js"));
 const styleSheet = readFileSync(path.join(__dirname, "../web/style.css"));
 const hostKey = randomBytes(32).toString("hex");
 
+/** @type {{id: string | null, status: "running" | "stopped", invitationToken: string | null}} */
 const session = {
     id: null,
     status: "stopped",
     invitationToken: null,
 };
 
+/** @typedef {{id: string, sessionId: string | null, profileId: string | null, lastSeenAt: number}} Player */
+/** @type {Map<string, Player>} */
 const players = new Map();
+/** @type {string | null} */
 let hostProfileId = null;
 let mapUploadInProgress = false;
+let tokenImageUploadInProgress = false;
 const PLAYER_TIMEOUT_MS = 30 * 60 * 1000;
+/** @type {Set<import("node:http").ServerResponse>} */
 const sessionStreams = new Set();
 
 function removeExpiredPlayers() {
@@ -47,6 +57,7 @@ function getPublicSession() {
   };
 }
 
+/** @param {import("node:http").ServerResponse} response */
 function sendSessionEvent(response) {
   const data = JSON.stringify(getPublicSession());
 
@@ -85,6 +96,7 @@ function broadcastTokenUpdate() {
   }
 }
 
+/** @param {import("node:http").IncomingMessage} request @param {string | null} token */
 function hasBearerToken(request, token) {
   const received = request.headers.authorization;
 
@@ -102,10 +114,12 @@ function hasBearerToken(request, token) {
   return timingSafeEqual(provided, expected);
 }
 
+/** @param {import("node:http").IncomingMessage} request */
 function isHost(request) {
   return hasBearerToken(request, hostKey);
 }
 
+/** @param {import("node:http").IncomingMessage} request */
 function getPlayer(request) {
   if (session.status !== "running") {
     return null;
@@ -122,8 +136,18 @@ function getPlayer(request) {
   return null;
 }
 
+/** @param {unknown} error */
+function describeError(error) {
+  if (error && typeof error === "object") {
+    const statusCode = "statusCode" in error && typeof error.statusCode === "number" ? error.statusCode : undefined;
+    const message = "message" in error && typeof error.message === "string" ? error.message : "Erreur inconnue.";
+    return { statusCode, message };
+  }
+  return { statusCode: undefined, message: "Erreur inconnue." };
+}
+
 const server = http.createServer(async (request, response) => {
-  const url = new URL(request.url, "http://127.0.0.1:3000");
+  const url = new URL(request.url || "/", "http://127.0.0.1:3000");
 
   if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/host")) {
     response.writeHead(200, {
@@ -167,6 +191,12 @@ const server = http.createServer(async (request, response) => {
       "Cache-Control": "no-store",
     });
     response.end(gridScript);
+    return;
+  }
+
+  if (request.method === "GET" && (url.pathname === "/abilities.js" || url.pathname === "/character.js")) {
+    response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" });
+    response.end(url.pathname === "/abilities.js" ? abilityScript : characterScript);
     return;
   }
 
@@ -226,6 +256,55 @@ const server = http.createServer(async (request, response) => {
     "application/json; charset=utf-8"
   );
 
+  const characterRoute = url.pathname.match(/^\/api\/characters\/([0-9a-f-]+)$/);
+  if (characterRoute && (request.method === "GET" || request.method === "PUT")) {
+    response.setHeader("Cache-Control", "no-store");
+    const profileId = characterRoute[1];
+    const host = isHost(request);
+    const player = host ? null : getPlayer(request);
+    if (!host && (!player || player.profileId !== profileId)) {
+      response.writeHead(403, { Connection: "close" });
+      response.end(JSON.stringify({ error: "Accès à cette fiche refusé." }));
+      return;
+    }
+    if (!getProfiles().some((profile) => profile.id === profileId)) {
+      response.writeHead(404, { Connection: "close" });
+      response.end(JSON.stringify({ error: "Profil introuvable." }));
+      return;
+    }
+    try {
+      if (request.method === "GET") {
+        response.writeHead(200);
+        response.end(JSON.stringify({ character: getCharacter(profileId) }));
+        return;
+      }
+      if (request.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") {
+        response.writeHead(415, { Connection: "close" });
+        response.end(JSON.stringify({ error: "Le contenu doit être envoyé en JSON." }));
+        return;
+      }
+      const body = await readJson(request, 262144);
+      if (!host && (getPlayer(request) !== player || player?.profileId !== profileId)) {
+        response.writeHead(403);
+        response.end(JSON.stringify({ error: "Accès à cette fiche révoqué." }));
+        return;
+      }
+      const character = saveCharacter(profileId, body);
+      for (const stream of sessionStreams) {
+        if (!stream.write("event: character-updated\ndata: {}\n\n")) stream.destroy();
+      }
+      response.writeHead(200);
+      response.end(JSON.stringify({ character }));
+    } catch (caught) {
+      if (response.destroyed) return;
+      const error = describeError(caught);
+      const code = error.statusCode !== undefined && [400, 408, 409, 413].includes(error.statusCode) ? error.statusCode : 500;
+      response.writeHead(code, { Connection: "close" });
+      response.end(JSON.stringify({ error: code === 500 ? "Impossible de traiter la fiche." : error.message }));
+    }
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/tokens") {
     response.setHeader("Cache-Control", "no-store");
     if (!isHost(request) && !getPlayer(request)) {
@@ -241,6 +320,85 @@ const server = http.createServer(async (request, response) => {
     } catch {
       response.writeHead(500);
       response.end(JSON.stringify({ error: "Impossible de charger les pions." }));
+    }
+    return;
+  }
+
+  const tokenImageRoute = url.pathname.match(/^\/api\/tokens\/([0-9a-f-]+)\/image$/);
+  if (tokenImageRoute && (request.method === "GET" || request.method === "PUT")) {
+    response.setHeader("Cache-Control", "no-store");
+    const host = isHost(request);
+    if (!host && (request.method === "PUT" || !getPlayer(request))) {
+      response.writeHead(401, { Connection: "close" });
+      response.end(JSON.stringify({ error: "Authentification requise." }));
+      return;
+    }
+    let imageUploadStarted = false;
+    try {
+      const map = getCurrentMap();
+      if (!map || url.searchParams.get("mapId") !== map.id) {
+        response.writeHead(409, { Connection: "close" });
+        response.end(JSON.stringify({ error: "La carte a changé. Réessaie." }));
+        return;
+      }
+      const token = listTokens(map.id).find((item) => item.id === tokenImageRoute[1]);
+      if (!token) {
+        response.writeHead(404, { Connection: "close" });
+        response.end(JSON.stringify({ error: "Pion introuvable." }));
+        return;
+      }
+      if (request.method === "GET") {
+        if (!token.image || url.searchParams.get("imageId") !== token.image.id) {
+          response.writeHead(404);
+          response.end(JSON.stringify({ error: "Image introuvable." }));
+          return;
+        }
+        const bytes = readTokenImage(token.image);
+        response.writeHead(200, { "Content-Type": token.image.mimeType, "Content-Length": bytes.length,
+          "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; sandbox" });
+        response.end(bytes);
+        return;
+      }
+      const contentType = request.headers["content-type"]?.split(";")[0].trim().toLowerCase();
+      if (contentType !== "image/png" && contentType !== "image/jpeg") {
+        response.writeHead(415, { Connection: "close" });
+        response.end(JSON.stringify({ error: "Choisis une image PNG ou JPEG." }));
+        return;
+      }
+      if (tokenImageUploadInProgress) {
+        response.writeHead(409, { Connection: "close" });
+        response.end(JSON.stringify({ error: "Un import d'image de pion est déjà en cours." }));
+        return;
+      }
+      tokenImageUploadInProgress = true;
+      imageUploadStarted = true;
+      const bytes = await readBytes(request, MAX_TOKEN_IMAGE_BYTES, 30000, "L'image du pion dépasse 5 Mio.");
+      if (response.destroyed) return;
+      if (getCurrentMap()?.id !== map.id || !listTokens(map.id).some((item) => item.id === token.id)) {
+        response.writeHead(409);
+        response.end(JSON.stringify({ error: "La carte ou le pion a changé. Réessaie." }));
+        return;
+      }
+      const image = saveTokenImage(bytes, contentType);
+      let updated;
+      try {
+        updated = setTokenImage(map.id, token.id, image);
+        if (!updated) throw new Error("Pion introuvable.");
+      } catch (error) {
+        deleteTokenImage(image);
+        throw error;
+      }
+      broadcastTokenUpdate();
+      response.writeHead(200);
+      response.end(JSON.stringify({ token: updated }));
+    } catch (caught) {
+      if (response.destroyed) return;
+      const error = describeError(caught);
+      const code = error.statusCode !== undefined && [400, 408, 413].includes(error.statusCode) ? error.statusCode : 500;
+      response.writeHead(code, { Connection: "close" });
+      response.end(JSON.stringify({ error: code === 500 ? "Impossible de traiter l'image du pion." : error.message }));
+    } finally {
+      if (imageUploadStarted) tokenImageUploadInProgress = false;
     }
     return;
   }
@@ -303,40 +461,42 @@ const server = http.createServer(async (request, response) => {
         response.end(JSON.stringify({ error: "Données du pion invalides." }));
         return;
       }
+      const tokenBody = /** @type {Record<string, unknown>} */ (body);
       const map = getCurrentMap();
-      if (!map || body.mapId !== map.id) {
+      if (!map || tokenBody.mapId !== map.id) {
         response.writeHead(409);
         response.end(JSON.stringify({ error: "La carte a changé. Réessaie." }));
         return;
       }
       let token;
       if (request.method === "POST") {
-        if (body.ownerProfileId !== null && !getProfiles().some((profile) => profile.id === body.ownerProfileId)) {
+        if (tokenBody.ownerProfileId !== null && !getProfiles().some((profile) => profile.id === tokenBody.ownerProfileId)) {
           response.writeHead(400);
           response.end(JSON.stringify({ error: "Profil introuvable." }));
           return;
         }
-        token = createToken(map, body);
+        token = createToken(map, /** @type {import("./token-store").TokenInput} */ (tokenBody));
       } else {
-        const existing = listTokens(map.id).find((item) => item.id === tokenRoute[1]);
+        const existing = listTokens(map.id).find((item) => item.id === tokenRoute?.[1]);
         if (!existing) {
           response.writeHead(404);
           response.end(JSON.stringify({ error: "Pion introuvable." }));
           return;
         }
-        if (!host && (!player.profileId || existing.ownerProfileId !== player.profileId)) {
+        if (!host && (!player || !player.profileId || existing.ownerProfileId !== player.profileId)) {
           response.writeHead(403);
           response.end(JSON.stringify({ error: "Tu ne peux déplacer que tes pions." }));
           return;
         }
-        token = moveToken(map, existing.id, body.x, body.y);
+        token = moveToken(map, existing.id, /** @type {number} */ (tokenBody.x), /** @type {number} */ (tokenBody.y));
       }
       broadcastTokenUpdate();
       response.writeHead(request.method === "POST" ? 201 : 200);
       response.end(JSON.stringify({ token }));
-    } catch (error) {
+    } catch (caught) {
+      const error = describeError(caught);
       if (response.destroyed) return;
-      const status = [400, 408, 409, 413].includes(error.statusCode) ? error.statusCode : 500;
+      const status = error.statusCode !== undefined && [400, 408, 409, 413].includes(error.statusCode) ? error.statusCode : 500;
       response.writeHead(status, { Connection: "close" });
       response.end(JSON.stringify({ error: status === 500 ? "Impossible d'enregistrer le pion." : error.message }));
     }
@@ -397,7 +557,7 @@ const server = http.createServer(async (request, response) => {
       return;
     }
     const contentType = request.headers["content-type"]?.split(";")[0].trim().toLowerCase();
-    if (!["image/png", "image/jpeg"].includes(contentType)) {
+    if (!["image/png", "image/jpeg"].includes(contentType || "")) {
       response.writeHead(415, { Connection: "close" });
       response.end(JSON.stringify({ error: "Choisis une image PNG ou JPEG." }));
       return;
@@ -415,9 +575,10 @@ const server = http.createServer(async (request, response) => {
       broadcastMapUpdate();
       response.writeHead(200);
       response.end(JSON.stringify({ map }));
-    } catch (error) {
+    } catch (caught) {
+      const error = describeError(caught);
       if (response.destroyed) return;
-      const status = [400, 408, 413].includes(error.statusCode) ? error.statusCode : 500;
+      const status = error.statusCode !== undefined && [400, 408, 413].includes(error.statusCode) ? error.statusCode : 500;
       response.writeHead(status, { Connection: "close" });
       response.end(JSON.stringify({ error: status === 500 ? "Impossible d'enregistrer la carte." : error.message }));
     } finally {
@@ -507,12 +668,13 @@ const server = http.createServer(async (request, response) => {
 
       response.writeHead(200);
       response.end(JSON.stringify({ campaign }));
-    } catch (error) {
+    } catch (caught) {
+      const error = describeError(caught);
       if (response.destroyed) {
         return;
       }
 
-      const statusCode = [400, 408, 413].includes(error.statusCode)
+      const statusCode = error.statusCode !== undefined && [400, 408, 413].includes(error.statusCode)
         ? error.statusCode
         : 500;
 
@@ -527,7 +689,7 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (url.pathname === "/api/host/profile" && ["GET", "POST"].includes(request.method)) {
+  if (url.pathname === "/api/host/profile" && ["GET", "POST"].includes(request.method || "")) {
     response.setHeader("Cache-Control", "no-store");
     if (!isHost(request)) {
       response.writeHead(401, { Connection: "close" });
@@ -548,7 +710,7 @@ const server = http.createServer(async (request, response) => {
     }
     try {
       const body = await readJson(request);
-      if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.profileId !== "string") {
+      if (!body || typeof body !== "object" || Array.isArray(body) || (!("profileId" in body) || typeof body.profileId !== "string")) {
         response.writeHead(400);
         response.end(JSON.stringify({ error: "Un identifiant de profil est requis." }));
         return;
@@ -566,12 +728,14 @@ const server = http.createServer(async (request, response) => {
         return;
       }
       const hostProfile = assignHostRole(profile.id);
+      if (!hostProfile) throw new Error("Profil du meneur introuvable.");
       hostProfileId = hostProfile.id;
       response.writeHead(200);
       response.end(JSON.stringify({ profile: hostProfile }));
-    } catch (error) {
+    } catch (caught) {
+      const error = describeError(caught);
       if (response.destroyed) return;
-      const status = [400, 408, 413].includes(error.statusCode) ? error.statusCode : 500;
+      const status = error.statusCode !== undefined && [400, 408, 413].includes(error.statusCode) ? error.statusCode : 500;
       response.writeHead(status, { Connection: "close" });
       response.end(JSON.stringify({ error: status === 500 ? "Impossible de choisir le profil du meneur." : error.message }));
     }
@@ -624,7 +788,7 @@ const server = http.createServer(async (request, response) => {
         body === null ||
         typeof body !== "object" ||
         Array.isArray(body) ||
-        typeof body.name !== "string" ||
+        (!("name" in body) || typeof body.name !== "string") ||
         body.name.trim().length < 1 ||
         body.name.trim().length > 40
       ) {
@@ -639,12 +803,13 @@ const server = http.createServer(async (request, response) => {
 
       response.writeHead(201);
       response.end(JSON.stringify({ profile }));
-    } catch (error) {
+    } catch (caught) {
+      const error = describeError(caught);
       if (response.destroyed){
         return;
       }
 
-      const statusCode = [400, 408, 413].includes(error.statusCode)
+      const statusCode = error.statusCode !== undefined && [400, 408, 413].includes(error.statusCode)
         ? error.statusCode
         : 500;
 
@@ -852,7 +1017,7 @@ const server = http.createServer(async (request, response) => {
         body === null ||
         typeof body !== "object" ||
         Array.isArray(body) ||
-        typeof body.profileId !== "string" ||
+        (!("profileId" in body) || typeof body.profileId !== "string") ||
         body.profileId.length === 0
       ) {
         response.writeHead(400);
@@ -899,12 +1064,13 @@ const server = http.createServer(async (request, response) => {
         playerId: player.id,
         profile,
       }));
-    } catch (error) {
+    } catch (caught) {
+      const error = describeError(caught);
       if (response.destroyed) {
         return;
       }
 
-      const statusCode = [400, 408, 413].includes(error.statusCode)
+      const statusCode = error.statusCode !== undefined && [400, 408, 413].includes(error.statusCode)
         ? error.statusCode
         : 500;
 

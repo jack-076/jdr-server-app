@@ -10,6 +10,8 @@ const path = require("node:path");
 const dataDirectory = path.join(__dirname, "../../data");
 const profilesFile = path.join(dataDirectory, "profiles.json");
 
+/** @typedef {{id: string, name: string, role: "player" | "host"}} Profile */
+/** @type {Profile[]} */
 let profiles = [];
 
 try {
@@ -35,7 +37,7 @@ try {
 
   profiles = savedProfiles.map((profile) => ({ ...profile, role: profile.role || "player" }));
 } catch (error) {
-  if (error.code !== "ENOENT") {
+  if (!(error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
     throw error;
   }
 }
@@ -48,6 +50,7 @@ function getProfiles() {
   }));
 }
 
+/** @param {unknown} name */
 function createProfile(name) {
   if (typeof name !== "string") {
     throw new Error("Le pseudo doit être du texte.");
@@ -59,6 +62,7 @@ function createProfile(name) {
     throw new Error("Le pseudo doit contenir entre 1 et 40 caractères.");
   }
 
+  /** @type {Profile} */
   const profile = {
     id: randomUUID(),
     name: trimmedName,
@@ -82,11 +86,13 @@ function createProfile(name) {
   return { ...profile };
 }
 
+/** @param {string} id */
 function assignHostRole(id) {
   const profile = profiles.find((item) => item.id === id);
   if (!profile) return null;
   if (profile.role === "host") return { ...profile };
 
+  /** @type {Profile[]} */
   const updatedProfiles = profiles.map((item) =>
     item.id === id ? { ...item, role: "host" } : item
   );
@@ -97,7 +103,7 @@ function assignHostRole(id) {
   });
   renameSync(temporaryFile, profilesFile);
   profiles = updatedProfiles;
-  return { ...profiles.find((item) => item.id === id) };
+  return { ...profile, role: "host" };
 }
 
 module.exports = { getProfiles, createProfile, assignHostRole };

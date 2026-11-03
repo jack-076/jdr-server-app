@@ -1,0 +1,11 @@
+{
+  "name": "jdr-server-app",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2"
+  }
+}

@@ -6,8 +6,8 @@ Projet de table de jeu de rôle virtuelle, hébergée sur la machine du meneur,
 Le projet dispose d'un serveur HTTP local et d'une interface web pour gérer et
 rejoindre une partie, créer des profils et les attribuer aux joueurs.
 L'application de bureau Windows (.exe) et Linux est prévue, mais n'est pas encore
-implémentée. Le plateau permet d'afficher une carte et des pions simples ; les
-images de tokens et les fiches de personnages restent à développer.
+implémentée. Le plateau permet d'afficher une carte, des pions avec une image
+facultative et une première fiche de personnage Pathfinder.
 
 ## Organisation
 
@@ -17,6 +17,7 @@ apps/
   web/          Interface web du meneur et des joueurs
 packages/
   shared/       Formats des messages et validations communes
+  pathfinder1/  Premières règles isolées pour Pathfinder première édition
 assets/
   maps/         Cartes fournies avec le projet
 tests/          Tests d'intégration entre les composants
@@ -38,14 +39,32 @@ Les fichiers `.gitkeep` servent uniquement à conserver les dossiers vides dans 
 
 ## Lancer le serveur
 
-Avec Node.js installé (développement effectué avec Node.js 24), depuis la racine :
+Avec Node.js 26 LTS installé, depuis la racine :
+
+```sh
+node --version
+```
+
+La version recommandée est Node.js 26.13.0 LTS, indiquée dans `.nvmrc` pour les
+utilisateurs de nvm. Elle comprend les correctifs de sécurité du
+[21 octobre 2026](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases).
+Installez une version récente depuis [nodejs.org](https://nodejs.org/en/download)
+ou via votre gestionnaire de versions Node.js. Si un serveur est déjà lancé,
+arrêtez-le et redémarrez-le après la mise à jour.
+
+Avec nvm installé, `nvm install` puis `nvm use` sélectionnent la version indiquée
+dans `.nvmrc` pour le terminal courant. Ce fichier ne met pas Node.js à jour
+automatiquement.
+
+Pour démarrer le serveur :
 
 ```sh
 node apps/server/index.js
 ```
 
 Le serveur écoute sur `http://127.0.0.1:3000`, uniquement sur la machine locale.
-`Ctrl+C` l'arrête. Aucune dépendance externe n'est nécessaire à ce stade.
+`Ctrl+C` l'arrête. Son exécution ne nécessite aucune dépendance externe ; les
+outils de développement s'installent séparément avec npm.
 
 Au lancement, le serveur ouvre automatiquement la page privée du meneur dans le
 navigateur par défaut (Windows ou Linux avec un environnement graphique). La clé
@@ -92,6 +111,8 @@ pages après une modification HTML, CSS ou JavaScript côté navigateur.
 | GET | `/api/map/image?id=...` | Télécharger la carte actuelle avec un accès valide |
 | GET / POST | `/api/tokens` | Consulter les pions ou en créer un (création réservée au meneur) |
 | PATCH / DELETE | `/api/tokens/:id` | Déplacer un pion autorisé ou le supprimer (suppression réservée au meneur) |
+| GET / PUT | `/api/tokens/:id/image` | Lire l'image d'un pion ou la remplacer (import réservé au meneur) |
+| GET / PUT | `/api/characters/:profileId` | Consulter ou enregistrer une fiche (meneur ou joueur du profil) |
 
 Un démarrage ou un arrêt redondant renvoie `409`. Une route inconnue renvoie `404`.
 L'état reste en mémoire et revient à `stopped` au redémarrage du serveur.
@@ -152,8 +173,8 @@ lecture à cinq secondes, comme pour la création des profils.
 F5 dans le même onglet retrouve le profil attribué via `/api/session/me`.
 Les profils sauvegardés survivent à un redémarrage du serveur, mais les accès et
 leurs réservations restent en mémoire : un arrêt de partie, un redémarrage ou
-l'expiration d'un accès libère les profils concernés. Les fiches de personnages
-liées aux profils ne sont pas encore disponibles.
+l'expiration d'un accès libère les profils concernés. Les données des fiches
+restent sauvegardées indépendamment des accès.
 
 ## Campagne et carte
 
@@ -183,11 +204,49 @@ Sur le plateau, la molette contrôle le zoom et le clic droit maintenu déplace 
 vue. "Recentrer" affiche à nouveau la carte entière. Chaque participant contrôle
 sa propre vue : zoomer ou se déplacer ne change pas la vue des autres.
 
+## Première fiche Pathfinder
+
+Sur la table, "Fiche de personnage" ouvre une première fiche Pathfinder 1 liée à
+un profil. Le meneur choisit le profil à consulter ; chaque joueur accède à celui
+qu'il utilise. Le meneur et le joueur concerné peuvent modifier le nom, le niveau,
+les points de vie (actuels, maximum et temporaires), les dégâts non létaux et les
+six caractéristiques. Leurs modificateurs sont calculés automatiquement. Les valeurs
+et leur révision sont conservées dans `data/characters` sur la machine du meneur.
+Un double-clic sur un pion lié à un profil ouvre aussi sa fiche : le meneur peut
+ouvrir celle de chaque profil et le joueur celle de son propre profil. Un pion
+sans profil n'a pas encore de fiche. La fenêtre se déplace en maintenant le clic
+gauche sur sa barre de titre. Elle présente tous les onglets de référence pour
+examen. "Résumé" (nom, niveau et points de vie), "Attributs", "Compétences",
+"Inventaire", "Biographie" et "Notes" sont modifiables. L'onglet "Combat" permet
+de saisir les bonus, défenses et sauvegardes, affichés aussi dans le résumé ; ces
+valeurs ne sont pas encore calculées automatiquement. Ses attaques et les autres
+onglets restent des maquettes clairement signalées. Le portrait affiche l'image
+du premier pion associé au profil sur la carte active lorsqu'elle est disponible.
+
+Les changements sont signalés en direct. Si deux personnes modifient la même fiche,
+une ancienne version est refusée pour éviter d'écraser la nouvelle : recharger la
+fiche permet de voir les valeurs enregistrées, mais remplace le brouillon local.
+Les anciennes fiches conservent leurs données ; leur niveau commence à 1 et leurs
+points de vie à 0 jusqu'à leur modification.
+Les deux vues de compétences permettent de modifier les rangs, le statut de classe,
+la caractéristique utilisée, le malus d'armure et un modificateur divers. Le total
+inclut le bonus de classe de +3 si au moins un rang est attribué. Les rangs utilisés
+sont comptés séparément pour Aventure et Background ; le budget et les jets ne sont
+pas encore automatisés. Les compétences personnalisées peuvent être ajoutées ou
+supprimées. Dans l'inventaire, on peut saisir la monnaie et des objets regroupés par
+catégorie, avec quantité, poids unitaire en livres, état équipé et description.
+Le poids des objets est additionné sans la monnaie. Les conteneurs ne possèdent pas
+encore de contenu imbriqué ; les effets d'équipement, images d'objets, sorts et
+règles Spheres restent à développer.
+
 ## Pions de test
 
-Le meneur peut ajouter un pion sur la carte active, lui donner un nom et
-éventuellement l'attribuer à un profil. Un pion sans profil est contrôlé seulement
-par le meneur. Il peut aussi sélectionner un pion et le supprimer.
+Le meneur peut ajouter un pion sur la carte active, lui donner un nom,
+éventuellement l'attribuer à un profil et choisir une image PNG ou JPEG de 5 Mio
+maximum. Il peut aussi sélectionner un pion existant, choisir une image et cliquer
+sur "Appliquer l'image au pion sélectionné", ou supprimer le pion. Sans image,
+le pion affiche son initiale. Un pion sans profil est contrôlé seulement par le
+meneur. Le serveur vérifie l'image et la réserve aux participants autorisés.
 
 Pour déplacer un pion, maintenir le clic gauche, viser une case et relâcher : le
 pion fantôme montre la destination uniquement au participant qui le déplace, puis
@@ -199,11 +258,25 @@ pions. Les flèches du clavier déplacent aussi le pion sélectionné. Il peut y
 jusqu'à 100 pions par carte. L'animation respecte le réglage de réduction des
 animations du système.
 
-Les positions sont sauvegardées dans `data/tokens` et restent associées à la carte
-après un redémarrage. Les pions sont pour l'instant représentés par des cercles
-avec une initiale ; l'utilisation d'images personnalisées reste à ajouter.
+Les positions sont sauvegardées dans `data/tokens` et les images dans
+`data/token-images` ; elles restent associées à la carte après un redémarrage.
+Les anciens fichiers image restent sur le disque après remplacement ou suppression.
 
 ## Vérifications
+
+TypeScript vérifie les fichiers JavaScript de l'application en mode strict grâce
+aux annotations JSDoc et à l'inférence de types. La configuration du serveur et
+de la grille figure dans `tsconfig.json` ; celle de l'interface se trouve dans
+`tsconfig.web.json`. Les données reçues du réseau restent soumises aux validations
+du serveur : une vérification de types ne remplace pas une validation à l'exécution.
+Avec Node.js et npm installés :
+
+```sh
+npm ci
+npm run typecheck
+```
+
+Cette vérification ne modifie pas les fichiers et ne remplace pas les tests.
 
 ```sh
 node --check apps/server/index.js
@@ -225,6 +298,7 @@ node tests/board.test.cjs
 node tests/map-view.test.cjs
 node tests/token-view.test.cjs
 node tests/grid.test.cjs
+node tests/pathfinder1-abilities.test.cjs
 node tests/map-e2e.test.cjs
 ```
 
@@ -245,9 +319,9 @@ Ce prototype local n'est pas prêt pour une exposition sur Internet.
 
 ## Prochaines étapes
 
-- Fiches de personnages créées et gérées par le meneur, liées aux profils joueurs.
+- Compléter les fiches Pathfinder et ajouter progressivement les règles Spheres.
 - Interface de bureau Windows et Linux avec Electron ; accès joueurs par navigateur.
-- Bibliothèque de médias : plusieurs cartes, images de tokens et illustrations d'objets.
+- Bibliothèque de médias : plusieurs cartes, gestion des images et illustrations d'objets.
 - Scènes partagées, visibilité, sauvegarde des campagnes et accès distant sécurisé.
 
 ## Licence

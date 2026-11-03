@@ -2,6 +2,11 @@
     const GRID_SIZE = 48;
 
     // Renvoie le centre de la case contenant la position, à l'intérieur de la carte.
+    /**
+     * @param {number} value Position sur l'axe de la carte.
+     * @param {number} limit Dimension de la carte sur cet axe.
+     * @returns {number} Centre de la case correspondante.
+     */
     function snapToGrid(value, limit) {
         if (!Number.isFinite(value) || !Number.isFinite(limit) || limit <= 0) {
             throw new TypeError("Position de grille invalide.");

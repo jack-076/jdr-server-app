@@ -1,5 +1,11 @@
+/**
+ * @param {import("node:http").IncomingMessage} request
+ * @param {number} [maxBytes]
+ * @returns {Promise<unknown>}
+ */
 function readJson(request, maxBytes = 4096) {
   return new Promise((resolve, reject) => {
+    /** @type {Buffer[]} */
     const chunks = [];
     let size = 0;
     let finished = false;
@@ -15,6 +21,7 @@ function readJson(request, maxBytes = 4096) {
       request.removeListener("aborted", onAborted);
     }
 
+    /** @param {string} message @param {number} statusCode */
     function fail(message, statusCode) {
       if (finished) {
         return;
@@ -24,11 +31,11 @@ function readJson(request, maxBytes = 4096) {
       cleanup();
       request.resume();
 
-      const error = new Error(message);
-      error.statusCode = statusCode;
+      const error = Object.assign(new Error(message), { statusCode });
       reject(error);
     }
 
+    /** @param {Buffer} chunk */
     function onData(chunk) {
       size += chunk.length;
 

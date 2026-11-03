@@ -9,12 +9,13 @@ const MAX_DIMENSION = 16384;
 const MAX_PIXELS = 40_000_000;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
+/** @param {string} message @returns {never} */
 function invalid(message) {
-  const error = new Error(message);
-  error.statusCode = 400;
+  const error = Object.assign(new Error(message), { statusCode: 400 });
   throw error;
 }
 
+/** @param {number} width @param {number} height */
 function checkDimensions(width, height) {
   if (!width || !height || width > MAX_DIMENSION || height > MAX_DIMENSION || width * height > MAX_PIXELS) {
     invalid("Dimensions de carte invalides ou trop grandes.");
@@ -22,6 +23,7 @@ function checkDimensions(width, height) {
 }
 
 // Vérifie la structure et les dimensions. Le décodage complet reste celui du navigateur.
+/** @param {Buffer} bytes */
 function inspectPng(bytes) {
   if (bytes.length < 45 || !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return null;
   let offset = 8;
@@ -50,6 +52,7 @@ function inspectPng(bytes) {
   return { mimeType: "image/png", extension: "png", width, height };
 }
 
+/** @param {Buffer} bytes */
 function inspectJpeg(bytes) {
   if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
   let offset = 2;
@@ -80,11 +83,11 @@ function inspectJpeg(bytes) {
   invalid("Dimensions JPEG introuvables.");
 }
 
+/** @param {Buffer} bytes */
 function inspectImage(bytes) {
   if (!Buffer.isBuffer(bytes) || bytes.length === 0) invalid("Le fichier est vide.");
   if (bytes.length > MAX_MAP_BYTES) {
-    const error = new Error("La carte dépasse 10 Mio.");
-    error.statusCode = 413;
+    const error = Object.assign(new Error("La carte dépasse 10 Mio."), { statusCode: 413 });
     throw error;
   }
   const info = inspectPng(bytes) || inspectJpeg(bytes);
@@ -97,7 +100,7 @@ function getCurrentMap() {
   try {
     map = JSON.parse(readFileSync(currentFile, "utf8"));
   } catch (error) {
-    if (error.code === "ENOENT") return null;
+    if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return null;
     throw error;
   }
   if (!map || !uuidPattern.test(map.id) || !["image/png", "image/jpeg"].includes(map.mimeType) ||
@@ -106,6 +109,7 @@ function getCurrentMap() {
   return { id: map.id, mimeType: map.mimeType, width: map.width, height: map.height };
 }
 
+/** @param {Buffer} bytes @param {string} [expectedType] */
 function saveMap(bytes, expectedType) {
   const { extension, ...info } = inspectImage(bytes);
   if (expectedType && info.mimeType !== expectedType) {
@@ -127,7 +131,7 @@ function saveMap(bytes, expectedType) {
       writeFileSync(imageFile, bytes, { mode: 0o600, flag: "wx" });
       imageWritten = true;
     } catch (error) {
-      if (error.code !== "EEXIST" || !readFileSync(imageFile).equals(bytes)) throw error;
+      if (!(error !== null && typeof error === "object" && "code" in error && error.code === "EEXIST") || !readFileSync(imageFile).equals(bytes)) throw error;
     }
     writeFileSync(temporaryFile, JSON.stringify(map), { mode: 0o600, flag: "wx" });
     renameSync(temporaryFile, currentFile);
@@ -139,6 +143,7 @@ function saveMap(bytes, expectedType) {
   return map;
 }
 
+/** @param {string | null} id */
 function readCurrentMap(id) {
   const map = getCurrentMap();
   if (!map || map.id !== id) return null;
@@ -146,4 +151,4 @@ function readCurrentMap(id) {
   return { map, bytes: readFileSync(path.join(directory, `${map.id}.${extension}`)) };
 }
 
-module.exports = { MAX_MAP_BYTES, getCurrentMap, saveMap, readCurrentMap };
+module.exports = { MAX_MAP_BYTES, inspectImage, getCurrentMap, saveMap, readCurrentMap };

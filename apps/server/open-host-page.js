@@ -1,5 +1,6 @@
 const { spawn } = require("node:child_process");
 
+/** @param {string} url Adresse privée du meneur. */
 function openHostPage(url) {
   const command = process.platform === "win32"
     ? "explorer.exe"

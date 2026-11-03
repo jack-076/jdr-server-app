@@ -1,15 +1,16 @@
 (() => {
-    const viewport = document.getElementById("board-viewport");
-    const mapImage = document.getElementById("board-map");
-    const grid = document.getElementById("board-grid");
-    const tokens = document.getElementById("board-tokens");
-    const reset = document.getElementById("board-reset");
+    const viewport = /** @type {HTMLElement} */ (document.getElementById("board-viewport"));
+    const mapImage = /** @type {HTMLImageElement} */ (document.getElementById("board-map"));
+    const grid = /** @type {HTMLElement} */ (document.getElementById("board-grid"));
+    const tokens = /** @type {HTMLElement} */ (document.getElementById("board-tokens"));
+    const reset = /** @type {HTMLButtonElement} */ (document.getElementById("board-reset"));
     const minZoom = 0.25;
     const maxZoom = 3;
     let minimumZoom = minZoom;
     let zoom = 1;
     let offsetX = 0;
     let offsetY = 0;
+    /** @type {{id: number, x: number, y: number} | null} */
     let drag = null;
     let fitPending = false;
 
@@ -22,6 +23,7 @@
         tokens.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`;
     }
 
+    /** @param {number} factor @param {number} x @param {number} y */
     function changeZoom(factor, x, y) {
         const next = Math.min(maxZoom, Math.max(minimumZoom, zoom * factor));
         const ratio = next / zoom;
@@ -32,6 +34,7 @@
         render();
     }
 
+    /** @param {number} factor */
     function zoomAtCenter(factor) {
         const rect = viewport.getBoundingClientRect();
         changeZoom(factor, rect.width / 2, rect.height / 2);
@@ -110,7 +113,7 @@
 
     for (const name of ["pointerup", "pointercancel", "lostpointercapture"]) {
         viewport.addEventListener(name, (event) => {
-            if (drag?.id === event.pointerId) stopDrag();
+            if (drag?.id === /** @type {PointerEvent} */ (event).pointerId) stopDrag();
         });
     }
     window.addEventListener("blur", stopDrag);

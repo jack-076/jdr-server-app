@@ -27,7 +27,7 @@ function node() {
   };
 }
 function page({ host = false, handler, profile = { id: 'alice' } } = {}) {
-  const ids = ['board-tokens', 'board-viewport', 'token-manager', 'token-form', 'token-name', 'token-owner', 'token-create', 'token-delete', 'token-status'];
+  const ids = ['board-tokens', 'board-viewport', 'token-manager', 'token-form', 'token-name', 'token-image', 'token-image-apply', 'token-owner', 'token-create', 'token-delete', 'token-status'];
   const nodes = Object.fromEntries(ids.map(id => [id, node()]));
   const calls = [], windowListeners = {};
   const window = {
@@ -39,6 +39,7 @@ function page({ host = false, handler, profile = { id: 'alice' } } = {}) {
     document: { getElementById: id => nodes[id], createElement: () => node() },
     window, hostKeyInput: { value: host ? tokenKey : '' }, playerToken: host ? null : tokenKey,
     currentPlayerProfile: profile, AbortSignal, encodeURIComponent, console: { error() {} },
+    URL: { createObjectURL: () => 'blob:test-token', revokeObjectURL() {} },
     fetch(url, options) { calls.push({ url, options }); return handler(url, options); },
   });
   vm.runInContext(source, context);
@@ -48,6 +49,70 @@ function page({ host = false, handler, profile = { id: 'alice' } } = {}) {
   };
   return { nodes, calls, window, context, fire };
 }
+
+test('un joueur voit l’image autorisée sur le pion et son fantôme', async () => {
+  const tokens = [{ id: 'one', name: 'Alice', ownerProfileId: 'alice', x: 120, y: 120,
+    image: { id: 'image-one', mimeType: 'image/png' } }];
+  const p = page({ handler: async (url, options) => {
+    assert.equal(options.headers.Authorization, `Bearer ${tokenKey}`);
+    if (url.startsWith('/api/tokens/one/image?')) return { ok: true, blob: async () => ({}) };
+    return reply({ map, tokens });
+  } });
+  await flush();
+  const token = p.nodes['board-tokens'].children[0];
+  assert.equal(token.dataset.hasImage, 'true');
+  assert.equal(token.style.backgroundImage, 'url("blob:test-token")');
+  p.fire(token, 'pointerdown', { button: 0, isPrimary: true, pointerId: 1, clientX: 0, clientY: 0 });
+  const ghost = p.nodes['board-tokens'].children[1];
+  assert.equal(ghost.dataset.hasImage, 'true');
+  assert.equal(ghost.style.backgroundImage, 'url("blob:test-token")');
+});
+
+test('un double-clic ouvre la fiche du profil autorisé et refuse les autres pions', async () => {
+  const tokens = [
+    { id: 'one', name: 'Alice', ownerProfileId: 'alice', x: 120, y: 120 },
+    { id: 'two', name: 'Bob', ownerProfileId: 'bob', x: 168, y: 120 },
+    { id: 'three', name: 'PNJ', ownerProfileId: null, x: 216, y: 120 },
+  ];
+  const p = page({ handler: async () => reply({ map, tokens }) });
+  const opened = [];
+  p.window.CharacterView = { openFor: async id => opened.push(id) };
+  await flush();
+  const buttons = p.nodes['board-tokens'].children;
+  p.fire(buttons[0], 'dblclick');
+  p.fire(buttons[1], 'dblclick');
+  assert.match(p.nodes['token-status'].textContent, /ton profil/);
+  p.fire(buttons[2], 'dblclick');
+  assert.match(p.nodes['token-status'].textContent, /pas lié/);
+  assert.deepEqual(opened, ['alice']);
+});
+
+test('le meneur crée un pion avec une image et peut relancer son import', async () => {
+  let tokens = [];
+  const file = { type: 'image/png', size: 12 };
+  const p = page({ host: true, handler: async (url, options) => {
+    if (url === '/api/profiles') return reply({ profiles: [] });
+    if (url === '/api/tokens' && !options.method) return reply({ map, tokens });
+    if (url === '/api/tokens' && options.method === 'POST') {
+      tokens = [{ id: 'one', ...JSON.parse(options.body) }];
+      return reply({ token: tokens[0] }, 201);
+    }
+    if (url === '/api/tokens/one/image?mapId=map-one') {
+      assert.equal(options.method, 'PUT');
+      assert.equal(options.body, file);
+      return reply({ token: tokens[0] });
+    }
+    throw new Error(`Route inattendue : ${url}`);
+  } });
+  await flush();
+  p.nodes['token-name'].value = 'Alice';
+  p.nodes['token-image'].files = [file];
+  await p.fire(p.nodes['token-form'], 'submit');
+  assert.equal(p.calls.filter(call => call.url === '/api/tokens/one/image?mapId=map-one').length, 1);
+  p.nodes['token-image'].files = [file];
+  await p.fire(p.nodes['token-image-apply'], 'click');
+  assert.equal(p.calls.filter(call => call.url === '/api/tokens/one/image?mapId=map-one').length, 2);
+});
 
 test('le MJ crée puis supprime un pion attribué', async () => {
   let tokens = [];

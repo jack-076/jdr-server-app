@@ -1,63 +1,68 @@
-const campaignTitle = document.getElementById("campaign-title");
-const campaignDescription = document.getElementById("campaign-description");
-const campaignMessage = document.getElementById("campaign-message");
-const campaignForm = document.getElementById("campaign-form");
-const campaignTitleInput = document.getElementById("campaign-title-input");
-const campaignDescriptionInput = document.getElementById("campaign-description-input");
-const saveCampaignButton = document.getElementById("save-campaign");
-const campaignSaveMessage = document.getElementById("campaign-save-message");
-const statusElement = document.getElementById("session-status");
+const campaignTitle = /** @type {HTMLElement} */ (document.getElementById("campaign-title"));
+const campaignDescription = /** @type {HTMLElement} */ (document.getElementById("campaign-description"));
+const campaignMessage = /** @type {HTMLElement} */ (document.getElementById("campaign-message"));
+const campaignForm = /** @type {HTMLFormElement} */ (document.getElementById("campaign-form"));
+const campaignTitleInput = /** @type {HTMLInputElement} */ (document.getElementById("campaign-title-input"));
+const campaignDescriptionInput = /** @type {HTMLTextAreaElement} */ (document.getElementById("campaign-description-input"));
+const saveCampaignButton = /** @type {HTMLButtonElement} */ (document.getElementById("save-campaign"));
+const campaignSaveMessage = /** @type {HTMLElement} */ (document.getElementById("campaign-save-message"));
+const statusElement = /** @type {HTMLElement} */ (document.getElementById("session-status"));
 let sessionRefreshPending = false;
-const hostKeyInput = document.getElementById("host-key");
-const startButton = document.getElementById("start-session");
-const stopButton = document.getElementById("stop-session");
-const hostMessage = document.getElementById("host-message");
-const invitationButton = document.getElementById("get-invitation");
-const invitationInput = document.getElementById("invitation-token");
-const joinForm = document.getElementById("join-form");
-const joinInput = document.getElementById("join-token");
-const joinButton = document.getElementById("join-session");
-const playerMessage = document.getElementById("player-message");
-const checkAccessButton = document.getElementById("check-access");
-const loadProfilesButton = document.getElementById("load-profiles");
-const profilesMessage = document.getElementById("profiles-message");
-const profilesList = document.getElementById("profiles-list");
-const createProfileForm = document.getElementById("create-profile-form");
-const profileNameInput = document.getElementById("profile-name");
-const createProfileButton = document.getElementById("create-profile");
-const createProfileMessage = document.getElementById("create-profile-message");
-const selectProfileForm = document.getElementById("select-profile-form");
-const playerProfileSelect = document.getElementById("player-profile");
-const selectProfileButton = document.getElementById("select-profile");
-const playerProfileMessage = document.getElementById("player-profile-message");
-const changeProfileButton = document.getElementById("change-profile");
-const cancelProfileChangeButton = document.getElementById("cancel-profile-change");
+const hostKeyInput = /** @type {HTMLInputElement} */ (document.getElementById("host-key"));
+const startButton = /** @type {HTMLButtonElement} */ (document.getElementById("start-session"));
+const stopButton = /** @type {HTMLButtonElement} */ (document.getElementById("stop-session"));
+const hostMessage = /** @type {HTMLElement} */ (document.getElementById("host-message"));
+const invitationButton = /** @type {HTMLButtonElement} */ (document.getElementById("get-invitation"));
+const invitationInput = /** @type {HTMLInputElement} */ (document.getElementById("invitation-token"));
+const joinForm = /** @type {HTMLFormElement} */ (document.getElementById("join-form"));
+const joinInput = /** @type {HTMLInputElement} */ (document.getElementById("join-token"));
+const joinButton = /** @type {HTMLButtonElement} */ (document.getElementById("join-session"));
+const playerMessage = /** @type {HTMLElement} */ (document.getElementById("player-message"));
+const checkAccessButton = /** @type {HTMLButtonElement} */ (document.getElementById("check-access"));
+const loadProfilesButton = /** @type {HTMLButtonElement} */ (document.getElementById("load-profiles"));
+const profilesMessage = /** @type {HTMLElement} */ (document.getElementById("profiles-message"));
+const profilesList = /** @type {HTMLElement} */ (document.getElementById("profiles-list"));
+const createProfileForm = /** @type {HTMLFormElement} */ (document.getElementById("create-profile-form"));
+const profileNameInput = /** @type {HTMLInputElement} */ (document.getElementById("profile-name"));
+const createProfileButton = /** @type {HTMLButtonElement} */ (document.getElementById("create-profile"));
+const createProfileMessage = /** @type {HTMLElement} */ (document.getElementById("create-profile-message"));
+const selectProfileForm = /** @type {HTMLFormElement} */ (document.getElementById("select-profile-form"));
+const playerProfileSelect = /** @type {HTMLSelectElement} */ (document.getElementById("player-profile"));
+const selectProfileButton = /** @type {HTMLButtonElement} */ (document.getElementById("select-profile"));
+const playerProfileMessage = /** @type {HTMLElement} */ (document.getElementById("player-profile-message"));
+const changeProfileButton = /** @type {HTMLButtonElement} */ (document.getElementById("change-profile"));
+const cancelProfileChangeButton = /** @type {HTMLButtonElement} */ (document.getElementById("cancel-profile-change"));
 
-const gameTable = document.getElementById("game-table");
-const openTableButton = document.getElementById("open-table");
-const tableTitle = document.getElementById("table-title");
-const tableProfile = document.getElementById("table-profile");
-const tableSessionStatus = document.getElementById("table-session-status");
-const tableChangeProfileButton = document.getElementById("table-change-profile");
+const gameTable = /** @type {HTMLElement} */ (document.getElementById("game-table"));
+const openTableButton = /** @type {HTMLButtonElement} */ (document.getElementById("open-table"));
+const tableTitle = /** @type {HTMLElement} */ (document.getElementById("table-title"));
+const tableProfile = /** @type {HTMLElement} */ (document.getElementById("table-profile"));
+const tableSessionStatus = /** @type {HTMLElement} */ (document.getElementById("table-session-status"));
+const tableChangeProfileButton = /** @type {HTMLButtonElement} */ (document.getElementById("table-change-profile"));
 let tableRequested = false;
 
-const hostProfileForm = document.getElementById("host-profile-form");
-const hostProfileSelect = document.getElementById("host-profile-select");
-const useHostProfileButton = document.getElementById("use-host-profile");
-const hostProfileMessage = document.getElementById("host-profile-message");
+const hostProfileForm = /** @type {HTMLFormElement} */ (document.getElementById("host-profile-form"));
+const hostProfileSelect = /** @type {HTMLSelectElement} */ (document.getElementById("host-profile-select"));
+const useHostProfileButton = /** @type {HTMLButtonElement} */ (document.getElementById("use-host-profile"));
+const hostProfileMessage = /** @type {HTMLElement} */ (document.getElementById("host-profile-message"));
+/** @typedef {{id: string, name: string, role?: "host" | "player"}} Profile */
+/** @type {Profile | null} */
 let currentHostProfile = null;
 
+/** @type {string | null} */
 let playerToken = null;
 let sessionRevision = 0;
 let accessCheckPending = false;
 let accessCheckRunning = false;
 let profileSelectionPending = false;
 let playerProfilesLoaded = false;
+/** @type {Profile | null} */
 let currentPlayerProfile = null;
 let profileChangeMode = false;
 let campaignLoadVersion = 0;
 
 function revokePlayerAccess() {
+    if (window.CharacterView) window.CharacterView.close();
     savePlayerToken(null);
     playerProfilesLoaded = false;
     joinInput.value = "";
@@ -74,6 +79,7 @@ function revokePlayerAccess() {
     playerMessage.textContent = "Accès expiré ou révoqué. Demande une nouvelle invitation.";
 }
 
+/** @param {string | null} token */
 function savePlayerToken(token) {
     playerToken = token;
     if (window.MapView) {
@@ -161,6 +167,7 @@ async function refreshSession() {
     }
 }
 
+/** @param {"start" | "stop"} action */
 async function changeSession(action) {
     const key = hostKeyInput.value.trim();
 
@@ -253,6 +260,7 @@ async function getInvitation() {
     }
 }
 
+/** @param {{preventDefault(): void}} event */
 async function joinSession(event) {
     event.preventDefault();
 
@@ -462,6 +470,7 @@ async function loadProfiles() {
     }
 }
 
+/** @param {Event} event */
 async function createPlayerProfile(event) {
     event.preventDefault();
 
@@ -537,7 +546,7 @@ loadProfilesButton.addEventListener("click", loadProfiles);
 startButton.addEventListener("click", () => changeSession("start"));
 stopButton.addEventListener("click", () => changeSession("stop"));
 invitationButton.addEventListener("click", getInvitation);
-checkAccessButton.addEventListener("click", checkPlayerAccess);
+checkAccessButton.addEventListener("click", () => { void checkPlayerAccess(); });
 joinForm.addEventListener("submit", joinSession);
 selectProfileForm.addEventListener("submit", selectPlayerProfile);
 playerProfileSelect.addEventListener("change", updateSelectProfileButton);
@@ -546,6 +555,8 @@ function beginProfileChange() {
     if (currentPlayerProfile === null || profileSelectionPending) {
         return;
     }
+
+    if (window.CharacterView) window.CharacterView.close();
 
     profileChangeMode = true;
     updateSelectProfileButton();
@@ -558,7 +569,7 @@ function beginProfileChange() {
 changeProfileButton.addEventListener("click", beginProfileChange);
 tableChangeProfileButton.addEventListener("click", beginProfileChange);
 openTableButton.addEventListener("click", () => showTable(true));
-document.getElementById("back-to-lobby").addEventListener("click", () => showTable(false));
+/** @type {HTMLElement} */ (document.getElementById("back-to-lobby")).addEventListener("click", () => showTable(false));
 
 cancelProfileChangeButton.addEventListener("click", () => {
     if (currentPlayerProfile === null || profileSelectionPending) {
@@ -586,6 +597,8 @@ function connectSessionEvents() {
   events.addEventListener("map-updated", () => { if (window.MapView) void window.MapView.refresh(); });
   events.addEventListener("map-updated", () => { if (window.TokenView) void window.TokenView.refresh(); });
   events.addEventListener("tokens-updated", () => { if (window.TokenView) void window.TokenView.refresh(); });
+  events.addEventListener("character-updated", () => { if (window.CharacterView) window.CharacterView.updated(); });
+  events.addEventListener("open", () => { if (window.CharacterView) window.CharacterView.updated(); });
   // Recharge aussi après une reconnexion pour rattraper les changements manqués.
   events.addEventListener("open", refreshPlayerCampaign);
   events.addEventListener("open", () => { if (window.MapView) void window.MapView.refresh(); });
@@ -681,7 +694,7 @@ async function loadPlayerProfiles(selectedProfileId = null) {
         }
 
         const currentProfile = result.profiles.find(
-            (profile) => profile.id === selectedProfileId
+            /** @param {Profile} profile */ (profile) => profile.id === selectedProfileId
         );
 
         currentPlayerProfile = currentProfile || null;
@@ -742,6 +755,7 @@ function updateSelectProfileButton() {
     if (window.TokenView) window.TokenView.updatePermissions();
 }
 
+/** @param {Event} event */
 async function selectPlayerProfile(event) {
     event.preventDefault();
 
@@ -824,11 +838,11 @@ maintainPlayerPresence();
 function initializeHostAccess() {
     updateTableState();
     const isHostPage = window.location.pathname === "/host";
-    document.getElementById("app-layout").className = isHostPage
+    /** @type {HTMLElement} */ (document.getElementById("app-layout")).className = isHostPage
         ? "app-layout host-page"
         : "app-layout";
-    document.getElementById("host-controls").hidden = !isHostPage;
-    document.getElementById("player-controls").hidden = isHostPage;
+    /** @type {HTMLElement} */ (document.getElementById("host-controls")).hidden = !isHostPage;
+    /** @type {HTMLElement} */ (document.getElementById("player-controls")).hidden = isHostPage;
     if (!isHostPage) return;
 
     const parameters = new URLSearchParams(window.location.hash.slice(1));
@@ -856,6 +870,7 @@ function initializeHostAccess() {
     }
 }
 
+/** @param {string | null} key */
 async function loadCampaign(key, { silent = false } = {}) {
     if (typeof key !== "string" || !/^[a-f0-9]{64}$/.test(key)) {
         return;
@@ -915,6 +930,7 @@ async function loadCampaign(key, { silent = false } = {}) {
     }
 }
 
+/** @param {Event} event */
 async function saveCampaign(event) {
     event.preventDefault();
 
@@ -991,22 +1007,23 @@ function updateTableState() {
 
     openTableButton.disabled = !allowed || profileSelectionPending || profileChangeMode;
     gameTable.hidden = !tableRequested;
-    document.getElementById("app-layout").hidden = tableRequested;
+    /** @type {HTMLElement} */ (document.getElementById("app-layout")).hidden = tableRequested;
     tableTitle.textContent = campaignTitle.textContent;
     tableProfile.textContent = isHost
         ? currentHostProfile ? `${currentHostProfile.name} (MJ)` : ""
-        : hasProfile ? currentPlayerProfile.name : "";
+        : currentPlayerProfile && hasProfile ? currentPlayerProfile.name : "";
     tableSessionStatus.textContent = statusElement.textContent;
     tableChangeProfileButton.hidden = isHost || !hasProfile;
     tableChangeProfileButton.disabled = profileSelectionPending;
 }
 
+/** @param {boolean} open */
 function showTable(open) {
     tableRequested = open;
     updateTableState();
     if (!gameTable.hidden) {
         tableTitle.focus();
-        document.getElementById("board-viewport").dispatchEvent(new Event("table-opened"));
+        /** @type {HTMLElement} */ (document.getElementById("board-viewport")).dispatchEvent(new Event("table-opened"));
     }
 }
 
@@ -1014,6 +1031,7 @@ function showTable(open) {
 async function loadHostProfile({ openCurrent = true } = {}) {
     const key = hostKeyInput.value;
     try {
+        /** @type {RequestInit} */
         const options = {
             headers: { Authorization: `Bearer ${key}` },
             cache: "no-store",
@@ -1075,6 +1093,7 @@ hostProfileForm.addEventListener("submit", async (event) => {
             return;
         }
         currentHostProfile = result.profile;
+        if (!currentHostProfile) throw new Error("Profil du meneur absent de la réponse.");
         hostProfileMessage.textContent = `Profil actif : "${currentHostProfile.name}". Droits de meneur.`;
         showTable(true);
     } catch (error) {

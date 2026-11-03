@@ -112,6 +112,20 @@ test('import de carte complet sur un serveur HTTP isolé', async (t) => {
   assert.equal(createdToken.status, 201);
   const token = (await createdToken.json()).token;
   assert.match(Buffer.from((await tokenEvent).value).toString(), /event: tokens-updated/);
+  const imagePath = `${base}/api/tokens/${token.id}/image?mapId=${trainingMap.id}`;
+  const playerUpload = await fetch(imagePath, { method: 'PUT', headers: { ...playerHeaders, 'Content-Type': 'image/png' }, body: png });
+  assert.equal(playerUpload.status, 401);
+  const invalidImage = await fetch(imagePath, { method: 'PUT', headers: { ...auth(), 'Content-Type': 'image/png' }, body: Buffer.from('non-image') });
+  assert.equal(invalidImage.status, 400);
+  const mismatchedImage = await fetch(imagePath, { method: 'PUT', headers: { ...auth(), 'Content-Type': 'image/jpeg' }, body: png });
+  assert.equal(mismatchedImage.status, 400);
+  const uploadedTokenImage = await fetch(imagePath, { method: 'PUT', headers: { ...auth(), 'Content-Type': 'image/png' }, body: png });
+  assert.equal(uploadedTokenImage.status, 200);
+  const imageId = (await uploadedTokenImage.json()).token.image.id;
+  assert.equal((await fetch(`${imagePath}&imageId=${imageId}`)).status, 401);
+  const playerTokenImage = await fetch(`${imagePath}&imageId=${imageId}`, { headers: playerHeaders });
+  assert.equal(playerTokenImage.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await playerTokenImage.arrayBuffer()), png);
   const moved = await fetch(`${base}/api/tokens/${token.id}`, {
     method: 'PATCH', headers: { ...playerHeaders, 'Content-Type': 'application/json' },
     body: JSON.stringify({ mapId: trainingMap.id, x: 900, y: 400 }),
@@ -121,11 +135,88 @@ test('import de carte complet sur un serveur HTTP isolé', async (t) => {
   assert.equal((await reloadedTraining.json()).map.id, trainingMap.id);
   const currentTokens = await fetch(base + '/api/tokens', { headers: playerHeaders });
   assert.equal((await currentTokens.json()).tokens[0].x, 888);
+  const otherProfileResponse = await fetch(base + '/api/profiles', {
+    method: 'POST', headers: { ...auth(), 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Autre' }),
+  });
+  const otherProfile = (await otherProfileResponse.json()).profile;
+  const characterPath = `/api/characters/${profile.id}`;
+  assert.equal((await fetch(base + characterPath)).status, 403);
+  assert.equal((await fetch(base + `/api/characters/${otherProfile.id}`, { headers: playerHeaders })).status, 403);
+  fs.mkdirSync(path.join(temporary, 'data/characters'), { recursive: true });
+  fs.writeFileSync(path.join(temporary, 'data/characters', `${profile.id}.json`), JSON.stringify({
+    name: 'Ancien Aldric', revision: 2,
+    scores: { strength: 14, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 },
+  }));
+  const initialSheet = await fetch(base + characterPath, { headers: playerHeaders });
+  const character = (await initialSheet.json()).character;
+  assert.equal(character.revision, 2);
+  assert.equal(character.scores.strength, 14);
+  assert.equal(character.level, 1);
+  assert.equal(character.hitPoints.maximum, 0);
+  assert.ok(character.skills.length > 20);
+  character.skills[0].ranks = 3;
+  character.skills[0].classSkill = true;
+  character.armorCheckPenalty = -2;
+  character.biography = { appearance: 'Cheveux bruns', history: 'Originaire de Korvosa' };
+  character.notes = 'Tester les sphères';
+  character.inventory.currency.gp = 42;
+  character.inventory.items.push({ id: 'test-weapon', name: 'Épée', category: 'weapon', quantity: 2,
+    weight: 1.5, equipped: true, description: 'Une arme de test' });
+  assert.equal(character.combat.armorClass, 10);
+  character.combat.armorClass = 17;
+  character.combat.will = 8;
+  character.name = 'Aldric';
+  character.level = 7;
+  character.hitPoints = { current: -3, maximum: 73, temporary: 5, nonlethal: 2 };
+  const savedSheet = await fetch(base + characterPath, {
+    method: 'PUT', headers: { ...playerHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(character),
+  });
+  assert.equal(savedSheet.status, 200);
+  assert.equal((await savedSheet.json()).character.revision, 3);
+  const invalidSheet = await fetch(base + characterPath, {
+    method: 'PUT', headers: { ...playerHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...character, revision: 3, hitPoints: { ...character.hitPoints, maximum: -1 } }),
+  });
+  assert.equal(invalidSheet.status, 400);
+  const invalidInventory = await fetch(base + characterPath, {
+    method: 'PUT', headers: { ...playerHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...character, revision: 3, inventory: { ...character.inventory,
+      items: [{ ...character.inventory.items[0], quantity: -1 }] } }),
+  });
+  assert.equal(invalidInventory.status, 400);
+  const conflict = await fetch(base + characterPath, {
+    method: 'PUT', headers: { ...auth(), 'Content-Type': 'application/json' }, body: JSON.stringify(character),
+  });
+  assert.equal(conflict.status, 409);
+  const forbiddenSheet = await fetch(base + `/api/characters/${otherProfile.id}`, {
+    method: 'PUT', headers: { ...playerHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(character),
+  });
+  assert.equal(forbiddenSheet.status, 403);
   await stop();
   ({ base, key } = await start());
   const persisted = await fetch(base + '/api/map', { headers: auth() });
   assert.equal((await persisted.json()).map.id, trainingMap.id);
   const persistedTokens = await fetch(base + '/api/tokens', { headers: auth() });
-  assert.equal((await persistedTokens.json()).tokens[0].x, 888);
+  const persistedToken = (await persistedTokens.json()).tokens[0];
+  assert.equal(persistedToken.x, 888);
+  assert.equal(persistedToken.image.id, imageId);
+  const persistedImage = await fetch(`${base}/api/tokens/${token.id}/image?mapId=${trainingMap.id}&imageId=${imageId}`, { headers: auth() });
+  assert.deepEqual(Buffer.from(await persistedImage.arrayBuffer()), png);
+  const persistedSheet = await fetch(base + characterPath, { headers: auth() });
+  const persistedCharacter = (await persistedSheet.json()).character;
+  assert.equal(persistedCharacter.scores.strength, 14);
+  assert.equal(persistedCharacter.level, 7);
+  assert.deepEqual(persistedCharacter.hitPoints, { current: -3, maximum: 73, temporary: 5, nonlethal: 2 });
+  assert.equal(persistedCharacter.skills[0].ranks, 3);
+  assert.equal(persistedCharacter.skills[0].classSkill, true);
+  assert.equal(persistedCharacter.armorCheckPenalty, -2);
+  assert.equal(persistedCharacter.biography.history, 'Originaire de Korvosa');
+  assert.equal(persistedCharacter.notes, 'Tester les sphères');
+  assert.equal(persistedCharacter.inventory.currency.gp, 42);
+  assert.equal(persistedCharacter.inventory.items[0].name, 'Épée');
+  assert.equal(persistedCharacter.inventory.items[0].quantity, 2);
+  assert.equal(persistedCharacter.inventory.items[0].weight, 1.5);
+  assert.equal(persistedCharacter.combat.armorClass, 17);
+  assert.equal(persistedCharacter.combat.will, 8);
   assert.equal((await fetch(base + '/api/map', { headers: playerHeaders })).status, 401);
 });
